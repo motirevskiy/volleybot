@@ -88,40 +88,6 @@ def cancel_training_handler(call: CallbackQuery, bot: BotType, forum_manager: Fo
 def register_user_handlers(bot: BotType) -> None:
     forum_manager = ForumManager(bot)
 
-    @bot.message_handler(commands=["start"])
-    def start_handler(message: Message):
-        """Показывает меню пользователя"""
-        username = message.from_user.username
-        if not username:
-            bot.reply_to(message, "Не удалось определить ваш username")
-            return
-        
-        # Добавляем пользователя в базу данных
-        admin_db.execute_query(
-            "INSERT OR IGNORE INTO users (username, user_id) VALUES (?, ?)",
-            (username, message.from_user.id)
-        )
-        
-        show_user_menu(message)
-
-    def show_user_menu(message: Message):
-        """Показывает главное меню пользователя"""
-        markup = InlineKeyboardMarkup()
-        markup.row(
-            InlineKeyboardButton("📝 Записаться", callback_data="sign_up"),
-            InlineKeyboardButton("❌ Отменить запись", callback_data="cancel_sign_up")
-        )
-        markup.row(
-            InlineKeyboardButton("🎫 Автозапись", callback_data="auto_signup"),
-            InlineKeyboardButton("📅 Мои тренировки", callback_data="my_trainings")
-        )
-        
-        bot.send_message(
-            message.chat.id,
-            "Выберите действие:",
-            reply_markup=markup
-        )
-
     def check_pending_invites():
         """Проверяет и удаляет просроченные приглашения"""
         for admin in admin_db.get_all_admins():
@@ -328,41 +294,6 @@ def register_user_handlers(bot: BotType) -> None:
         admin_db.execute_query("DELETE FROM users WHERE user_id = ?", (user_id,))
         bot.send_message(call.message.chat.id, "Вы успешно отписаны от рассылки.")
 
-    @bot.callback_query_handler(func=lambda call: call.data == "cancel_sign_up")
-    def cancel_sign_up(call: CallbackQuery) -> None:
-        username = call.from_user.username
-        if not username:
-            bot.send_message(call.message.chat.id, "Не удалось определить ваш username.")
-            return
-            
-        all_admins = admin_db.get_all_admins()
-        user_trainings: List[Tuple[str, int, str, str, str, str]] = []
-
-        for admin in all_admins:
-            trainer_db = TrainerDB(admin[0])
-            trainings = trainer_db.get_trainings_for_user(username)
-            for training in trainings:
-                user_trainings.append((
-                    admin[0],  # username админа
-                    training.id,
-                    training.date_time.strftime('%Y-%m-%d %H:%M'),
-                    training.kind,
-                    training.location,
-                    training.status
-                ))
-
-        if not user_trainings:
-            bot.send_message(call.message.chat.id, "Вы не записаны ни на одну тренировку.")
-            return
-
-        markup = InlineKeyboardMarkup()
-        for admin_username, training_id, date_time, training_type, location, _ in user_trainings:
-            button_text = f"{date_time} | {training_type} | {location}"
-            callback_data = f"cancel_{admin_username}_{training_id}"  # Добавляем username админа
-            markup.add(InlineKeyboardButton(button_text, callback_data=callback_data))
-
-        bot.send_message(call.message.chat.id, "Выберите тренировку для отмены записи:", reply_markup=markup)
-
     @bot.callback_query_handler(func=lambda call: call.data.startswith("signup_"))
     def sign_up_for_training(call: CallbackQuery):
         """Обработчик записи на тренировку"""
@@ -401,6 +332,7 @@ def register_user_handlers(bot: BotType) -> None:
 
     @bot.callback_query_handler(func=lambda call: call.data.startswith("cancel_") and len(call.data.split("_")) == 3)
     def cancel_training(call: CallbackQuery):
+        print("user.py str 370 called")
         """Обработчик отмены записи на тренировку"""
         cancel_training_handler(call, bot, forum_manager)
 
@@ -467,7 +399,7 @@ def register_user_handlers(bot: BotType) -> None:
                 row_buttons.append(
                     InlineKeyboardButton(
                         "❌ Отменить запись",
-                        callback_data=f"cancel_{training.id}"
+                        callback_data=f"cancel_{admin_username}_{training.id}"
                     )
                 )
                 
@@ -1051,55 +983,6 @@ def process_payment_screenshot(message: Message, training_id: int):
             message.chat.id,
             "Скриншот отправлен администратору на проверку"
         )
-
-def show_user_trainings(message: Message):
-    username = message.from_user.username
-    
-    markup = InlineKeyboardMarkup()
-    has_trainings = False
-    
-    for admin in admin_db.get_all_admins():
-        trainer_db = TrainerDB(admin[0])
-        trainings = trainer_db.get_user_trainings(username)
-        
-        for training in trainings:
-            has_trainings = True
-            message = (
-                f"🏋️‍♂️ Тренировка: {training.kind}\n"
-                f"📅 Дата: {training.date_time.strftime('%d.%m.%Y %H:%M')}\n"
-                f"📍 Место: {training.location}\n"
-                f"⏱ Длительность: {training.duration} минут\n"
-                f"👤 Тренер: @{admin[0]}"
-            )
-            training_text = (
-                f"{training.date_time.strftime('%d.%m.%Y %H:%M')} | "
-                f"{training.kind} | {training.location}"
-            )
-            
-            row_buttons = []
-            
-            # Проверяем статус оплаты
-            paid_status = trainer_db.get_payment_status(username, training.id)
-            if paid_status == 0:  # Если не оплачено
-                row_buttons.append(
-                    InlineKeyboardButton(
-                        "💰 Оплатить",
-                        callback_data=f"mark_paid_{training.id}"
-                    )
-                )
-            
-            # Кнопка отмены записи
-            row_buttons.append(
-                InlineKeyboardButton(
-                    "❌ Отменить запись",
-                    callback_data=f"cancel_{training.id}"
-                )
-            )
-            
-            markup = InlineKeyboardMarkup()
-            markup.row(*row_buttons)
-            markup.add(InlineKeyboardButton(training_text, callback_data=f"info_{training.id}"))
-            bot.send_message(message.chat.id, message, reply_markup=markup)
 
 def get_training_type(message: Message, action: str, training_id: Optional[int]) -> None:
     user_id = message.from_user.id

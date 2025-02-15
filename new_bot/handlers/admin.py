@@ -851,36 +851,6 @@ def register_admin_handlers(bot: BotType) -> None:
                 
             bot.send_message(call.message.chat.id, message)
 
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("cancel_signup_"))
-    def cancel_training_signup(call: CallbackQuery):
-        """Обработчик отмены записи на тренировку"""
-        try:
-            training_id = int(call.data.split("_")[-1])
-            username = call.from_user.username
-            
-            # Находим админа тренировки
-            admin_username = find_training_admin(training_id)
-            if not admin_username:
-                bot.send_message(call.message.chat.id, "Ошибка: тренировка не найдена")
-                return
-                
-            trainer_db = TrainerDB(admin_username)
-            
-            if trainer_db.remove_participant(username, training_id):
-                bot.send_message(call.message.chat.id, "Вы успешно отменили запись на тренировку")
-                
-                # Предлагаем место следующему в резерве
-                offer_spot_to_reserve(training_id, admin_username)
-                
-                # Обновляем список в форуме
-                if topic_id := trainer_db.get_topic_id(training_id):
-                    training = trainer_db.get_training_details(training_id)
-                    participants = trainer_db.get_participants_by_training_id(training_id)
-                    forum_manager.update_participants_list(training, participants, topic_id, trainer_db)
-        except Exception as e:
-            print(f"Error in cancel_training_signup: {e}")
-            bot.send_message(call.message.chat.id, "Произошла ошибка при отмене записи")
-
     def offer_spot_to_reserve(training_id: int, admin_username: str):
         """Предлагает место следующему в резерве"""
         trainer_db = TrainerDB(admin_username)
