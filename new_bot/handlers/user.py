@@ -4,8 +4,8 @@ import time
 from telebot.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, Message
 from new_bot.database.admin import AdminDB
 from new_bot.database.trainer import TrainerDB
-from new_bot.utils.messages import create_schedule_message, create_open_training_message
-from new_bot.utils.keyboards import get_trainings_keyboard, get_user_trainings_keyboard
+from new_bot.utils.messages import create_schedule_message
+from new_bot.utils.keyboards import get_trainings_keyboard
 from new_bot.types import Training, BotType
 from typing import List, Tuple, Optional
 from new_bot.utils.forum_manager import ForumManager

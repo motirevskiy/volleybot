@@ -2,7 +2,6 @@ from typing import List
 from telebot.types import Message
 from new_bot.config import CHANNEL_ID
 from new_bot.types import Training
-from new_bot.utils.messages import format_participant
 from new_bot.database.trainer import TrainerDB
 
 class ForumManager:
@@ -166,30 +165,4 @@ class ForumManager:
             self.chat_id,
             message,
             message_thread_id=topic_id
-        )
-
-    def format_participant(self, username: str, training_id: int, trainer_db: TrainerDB) -> str:
-        """Форматирует строку участника для списка"""
-        paid_status = trainer_db.get_payment_status(username, training_id)
-        invite_status = trainer_db.get_invite_status(username, training_id)
-        # Проверяем статус приглашения
-        invite = trainer_db.fetch_one('''
-            SELECT status FROM invites 
-            WHERE username = ? AND training_id = ? 
-            AND status = 'PENDING'
-            AND invite_timestamp > datetime('now', '-1 hour')
-            ORDER BY invite_timestamp DESC
-            LIMIT 1
-        ''', (username, training_id))
-        
-        # Определяем статус
-        if invite:  # Если есть активное приглашение
-            status = "⏳"  # Ожидается подтверждение приглашения или предложения из резерва
-        elif paid_status == 2:
-            status = "✅"  # Оплачено
-        else:
-            status = ""   # Нет пометки
-        
-        return (
-            f"{status} @{username}"
         )

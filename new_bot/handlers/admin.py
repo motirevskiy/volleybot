@@ -10,11 +10,6 @@ from new_bot.utils.keyboards import (
     get_admin_list_keyboard,
     get_confirm_keyboard
 )
-from new_bot.utils.messages import (
-    create_training_message,
-    create_open_training_message,
-    format_participant
-)
 from new_bot.types import Training, TrainingData, HandlerType, BotType
 from new_bot.utils.validators import (
     validate_datetime,

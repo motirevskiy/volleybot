@@ -2,7 +2,7 @@ import os
 from new_bot.database.base import BaseDB
 from typing import List, Optional, Tuple
 from datetime import datetime, timedelta
-from new_bot.types import Training, User
+from new_bot.types import Training
 
 class TrainerDB(BaseDB):
     def __init__(self, admin_username: str):
