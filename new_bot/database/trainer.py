@@ -285,93 +285,6 @@ class TrainerDB(BaseDB):
             print(f"Error setting training open: {e}")
             return False
 
-    def get_closed_trainings(self) -> List[Training]:
-        """
-        Получает список закрытых тренировок.
-        
-        Returns:
-            List[Training]: Список тренировок
-        """
-        rows = self.fetch_all(
-            """
-            SELECT training_id, date_time, duration, kind, location, max_participants, status, price
-            FROM schedule 
-            WHERE status != 'OPEN'
-            """
-        )
-        return [
-            Training(
-                id=row[0],
-                date_time=datetime.strptime(row[1], '%Y-%m-%d %H:%M'),
-                duration=row[2],
-                kind=row[3],
-                location=row[4],
-                max_participants=row[5],
-                status=row[6],
-                price=row[7]
-            ) for row in rows
-        ]
-
-    def notify_participants_about_deletion(self, bot: 'BotType', training_id: int) -> None:
-        """
-        Уведомляет всех участников и резерв об отмене тренировки.
-        
-        Args:
-            bot: Экземпляр бота для отправки сообщений
-            training_id: ID тренировки
-        """
-        # Получаем детали тренировки перед удалением
-        training = self.get_training_details(training_id)
-        if not training:
-            return
-            
-        # Получаем список участников и резерва
-        participants = self.get_participants_by_training_id(training_id)
-        reserve_list = self.get_reserve_list(training_id)
-        
-        # Формируем сообщение об отмене
-        cancel_message = (
-            f"❌ Тренировка была отменена:\n"
-            f"Дата: {training.date_time.strftime('%Y-%m-%d %H:%M')}\n"
-            f"Тип: {training.kind}\n"
-            f"Место: {training.location}"
-        )
-        
-        # Получаем user_id для каждого участника из таблицы users
-        from new_bot.database.admin import AdminDB
-        admin_db = AdminDB()
-        
-        # Уведомляем основных участников
-        for username in participants:
-            user = admin_db.fetch_one(
-                "SELECT user_id FROM users WHERE username = ?",
-                (username,)
-            )
-            if user:
-                try:
-                    bot.send_message(user[0], cancel_message)
-                except Exception as e:
-                    print(f"Ошибка отправки уведомления пользователю {username}: {e}")
-        
-        # Уведомляем участников из резерва
-        reserve_message = (
-            f"❌ Тренировка, в резерве которой вы находились, была отменена:\n"
-            f"Дата: {training.date_time.strftime('%Y-%m-%d %H:%M')}\n"
-            f"Тип: {training.kind}\n"
-            f"Место: {training.location}"
-        )
-        
-        for username, position, status in reserve_list:
-            user = admin_db.fetch_one(
-                "SELECT user_id FROM users WHERE username = ?",
-                (username,)
-            )
-            if user:
-                try:
-                    bot.send_message(user[0], reserve_message)
-                except Exception as e:
-                    print(f"Ошибка отправки уведомления пользователю {username}: {e}")
-
     def get_user_statistics(self, username: str) -> dict:
         """Получает статистику пользователя"""
         stats = {
@@ -436,13 +349,6 @@ class TrainerDB(BaseDB):
             
             if participants:
                 notification_manager.send_reminder(training, participants, hours_before) 
-
-    def remove_all_participants(self, training_id: int) -> None:
-        """Удаляет всех участников тренировки"""
-        self.execute_query(
-            "DELETE FROM participants WHERE training_id = ?", 
-            (training_id,)
-        ) 
 
     def update_topic_id(self, training_id: int, topic_id: int) -> None:
         """Обновляет ID темы для тренировки"""
@@ -590,123 +496,6 @@ class TrainerDB(BaseDB):
             print(f"[ERROR] Error in accept_reserve_spot: {e}")
             return False
 
-    def decline_reserve_spot(self, username: str, training_id: int) -> bool:
-        """Отклоняет приглашение"""
-        try:
-            # Удаляем из списка
-            self.execute_query('''
-                DELETE FROM participants
-                WHERE username = ? AND training_id = ? AND status = 'PENDING'
-            ''', (username, training_id))
-            
-            # Предлагаем место следующему
-            self.offer_spot_to_next_in_reserve(training_id)
-            return True
-        except Exception as e:
-            print(f"Error in decline_reserve_spot: {e}")
-            return False
-
-    def is_spot_available(self, training_id: int) -> bool:
-        """Проверяет, есть ли свободные места на тренировке"""
-        # Получаем максимальное количество участников
-        max_participants = self.fetch_one('''
-            SELECT max_participants FROM schedule WHERE training_id = ?
-        ''', (training_id,))[0]
-        
-        # Получаем текущее количество участников (включая PENDING)
-        current_participants = self.fetch_one('''
-            SELECT COUNT(*) FROM participants 
-            WHERE training_id = ? AND status IN ('ACTIVE', 'PENDING')
-        ''', (training_id,))[0]
-        
-        return current_participants < max_participants
-
-    def cancel_reserve(self, username: str, training_id: int) -> bool:
-        """Отменяет запись в резерве"""
-        position = self.fetch_one('''
-            SELECT position FROM reserve 
-            WHERE username = ? AND training_id = ?
-        ''', (username, training_id))
-        
-        if not position:
-            return False
-            
-        self.remove_from_reserve(username, training_id)
-        return True 
-
-    def swap_participant_with_reserve(self, participant: str, reserve: str, training_id: int) -> bool:
-        """Меняет местами участника из основного списка с участником из резерва"""
-        # Проверяем, что оба пользователя существуют в нужных списках
-        participant_exists = self.fetch_one('''
-            SELECT 1 FROM participants 
-            WHERE username = ? AND training_id = ?
-        ''', (participant, training_id))
-        
-        reserve_exists = self.fetch_one('''
-            SELECT 1 FROM reserve 
-            WHERE username = ? AND training_id = ? AND status = 'WAITING'
-        ''', (reserve, training_id))
-        
-        if not (participant_exists and reserve_exists):
-            return False
-            
-        try:
-            # Начинаем транзакцию
-            self.cursor.execute("BEGIN")
-            
-            # Удаляем участника из основного списка
-            self.cursor.execute(
-                "DELETE FROM participants WHERE username = ? AND training_id = ?",
-                (participant, training_id)
-            )
-            
-            # Получаем и сохраняем позицию в резерве
-            self.cursor.execute(
-                "SELECT position FROM reserve WHERE username = ? AND training_id = ?",
-                (reserve, training_id)
-            )
-            reserve_position = self.cursor.fetchone()[0]
-            
-            # Удаляем участника из резерва
-            self.cursor.execute(
-                "DELETE FROM reserve WHERE username = ? AND training_id = ?",
-                (reserve, training_id)
-            )
-            
-            # Сдвигаем позиции оставшихся участников в резерве
-            self.cursor.execute('''
-                UPDATE reserve 
-                SET position = position - 1 
-                WHERE training_id = ? AND position > ?
-            ''', (training_id, reserve_position))
-            
-            # Добавляем участника из резерва в основной список
-            self.cursor.execute(
-                "INSERT INTO participants (username, training_id) VALUES (?, ?)",
-                (reserve, training_id)
-            )
-            
-            # Добавляем бывшего участника в резерв
-            max_pos = self.cursor.execute(
-                "SELECT MAX(position) FROM reserve WHERE training_id = ?",
-                (training_id,)
-            ).fetchone()[0]
-            
-            new_position = 1 if not max_pos else max_pos + 1
-            
-            self.cursor.execute('''
-                INSERT INTO reserve (username, training_id, position, status)
-                VALUES (?, ?, ?, 'WAITING')
-            ''', (participant, training_id, new_position))
-            
-            # Завершаем транзакцию
-            self.connection.commit()
-            return True
-            
-        except Exception as e:
-            self.connection.rollback()
-            return False 
-
     def set_payment_status(self, username: str, training_id: int, status: int):
         """Устанавливает статус оплаты"""
         self.execute_query(
@@ -752,14 +541,6 @@ class TrainerDB(BaseDB):
             AND invite_timestamp > datetime('now', '-1 hour')
         ''', (username, training_id))
         return result[0] if result else 0
-
-    def cleanup_old_invites(self):
-        """Очищает старые приглашения"""
-        self.execute_query('''
-            DELETE FROM invites 
-            WHERE status = 'PENDING' 
-            AND invite_timestamp < datetime('now', '-24 hours')
-        ''') 
 
     def get_invite_status(self, username: str, training_id: int) -> Optional[Tuple[str]]:
         """Получает статус приглашения"""

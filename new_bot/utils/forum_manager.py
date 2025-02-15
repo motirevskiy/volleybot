@@ -168,11 +168,6 @@ class ForumManager:
             message_thread_id=topic_id
         )
 
-    def close_topic(self, topic_id: int) -> None:
-        """Закрывает тему тренировки"""
-        # Этот метод больше не нужен, так как закрытие происходит в send_training_update
-        pass 
-
     def format_participant(self, username: str, training_id: int, trainer_db: TrainerDB) -> str:
         """Форматирует строку участника для списка"""
         paid_status = trainer_db.get_payment_status(username, training_id)
@@ -198,15 +193,3 @@ class ForumManager:
         return (
             f"{status} @{username}"
         )
-
-    def format_reserve(self, username: str, position: int, status: str) -> str:
-        """Форматирует строку участника резерва"""
-        status_emoji = {
-            'WAITING': "",
-            'OFFERED': "⏳",  # Теперь используем часы для предложенного места
-            'DECLINED': ""
-        }
-        
-        return (
-            f"{position}. {status_emoji[status]} @{username}"
-        ) 

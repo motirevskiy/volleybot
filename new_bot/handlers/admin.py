@@ -194,7 +194,6 @@ def register_admin_handlers(bot: BotType) -> None:
         training_data = training_creation_data[user_id]
         
         if not training_data.is_complete():
-            show_missing_fields(message, training_data)
             return
         
         try:
@@ -633,7 +632,7 @@ def register_admin_handlers(bot: BotType) -> None:
                 us = admin_db.get_user_info(user[0])
 
                 try:
-                    if us not in auto_signup_users and us.is_admin == False:
+                    if us.username not in auto_signup_users and us.is_admin == False:
                         bot.send_message(user[0], notification, reply_markup=markup)
                 except Exception as e:
                     print(f"Ошибка отправки уведомления пользователю {user[0]}: {e}")
@@ -787,8 +786,8 @@ def register_admin_handlers(bot: BotType) -> None:
             
             markup = InlineKeyboardMarkup()
             markup.add(
-                InlineKeyboardButton("Принять", callback_data=f"accept_{training_id}"),
-                InlineKeyboardButton("Отказаться", callback_data=f"decline_{training_id}")
+                InlineKeyboardButton("Принять", callback_data=f"accept_reserve_{training_id}"),
+                InlineKeyboardButton("Отказаться", callback_data=f"decline_reserve_{training_id}")
             )
             
             message = (
@@ -812,11 +811,11 @@ def register_admin_handlers(bot: BotType) -> None:
                 except Exception as e:
                     print(f"Ошибка отправки предложения пользователю @{next_user}: {e}")
 
-    @bot.callback_query_handler(func=lambda call: call.data.startswith(("accept_", "decline_")) and "invite" not in call.data)
+    @bot.callback_query_handler(func=lambda call: call.data.startswith(("accept_reserve_", "decline_reserve_")) and "invite" not in call.data)
     def handle_reserve_response(call: CallbackQuery):
         parts = call.data.split("_")
         action = parts[0]  # "accept" или "decline"
-        training_id = int(parts[1])
+        training_id = int(parts[2])
         username = call.from_user.username
         
         admin_username = find_training_admin(training_id)
