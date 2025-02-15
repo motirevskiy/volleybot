@@ -128,12 +128,6 @@ def register_admin_handlers(bot: BotType) -> None:
     def cancel_action(call: CallbackQuery):
         bot.send_message(call.message.chat.id, "Действие отменено.")
 
-    @bot.callback_query_handler(func=lambda call: call.data == "list_admins")
-    def list_admins(call: CallbackQuery):
-        admins = admin_db.get_all_admins()
-        text = "Список администраторов:\n" + "\n".join([f"@{a[0]}" for a in admins]) if admins else "Нет админов."
-        bot.send_message(call.message.chat.id, text)
-
     # Обработчики для работы с тренировками
     @bot.callback_query_handler(func=lambda call: call.data == "create_training")
     def create_training(call: CallbackQuery) -> None:
@@ -179,42 +173,6 @@ def register_admin_handlers(bot: BotType) -> None:
             msg = bot.send_message(message.chat.id, "Введите максимальное количество участников:")
             bot.register_next_step_handler(msg, get_max_participants, action, training_id)
 
-    def get_training_duration(message: Message, action: str, training_id: Optional[int]) -> None:
-        user_id = message.from_user.id
-        try:
-            duration = validate_duration(message.text)
-            training_creation_data[user_id].duration = duration
-            msg = bot.send_message(message.chat.id, "Введите тип тренировки:")
-            bot.register_next_step_handler(msg, get_training_type, action, training_id)
-        except ValidationError as e:
-            bot.send_message(message.chat.id, f"Ошибка: {str(e)}")
-            msg = bot.send_message(message.chat.id, "Введите длительность тренировки (в минутах):")
-            bot.register_next_step_handler(msg, get_training_duration, action, training_id)
-
-    def get_training_type(message: Message, action: str, training_id: Optional[int]) -> None:
-        user_id = message.from_user.id
-        try:
-            training_kind = validate_kind(message.text)
-            training_creation_data[user_id].kind = training_kind
-            msg = bot.send_message(message.chat.id, "Введите место тренировки:")
-            bot.register_next_step_handler(msg, get_training_location, action, training_id)
-        except ValidationError as e:
-            bot.send_message(message.chat.id, f"Ошибка: {str(e)}")
-            msg = bot.send_message(message.chat.id, "Введите тип тренировки:")
-            bot.register_next_step_handler(msg, get_training_type, action, training_id)
-
-    def get_training_location(message: Message, action: str, training_id: Optional[int]) -> None:
-        user_id = message.from_user.id
-        try:
-            location = validate_location(message.text)
-            training_creation_data[user_id].location = location
-            msg = bot.send_message(message.chat.id, "Введите стоимость тренировки (в рублях):")
-            bot.register_next_step_handler(msg, get_training_price, action, training_id)
-        except ValidationError as e:
-            bot.send_message(message.chat.id, f"Ошибка: {str(e)}")
-            msg = bot.send_message(message.chat.id, "Введите место тренировки:")
-            bot.register_next_step_handler(msg, get_training_location, action, training_id)
-
     def get_training_price(message: Message, action: str, training_id: Optional[int]) -> None:
         """Обрабатывает ввод цены тренировки и передает данные в save_training_data"""
         user_id = message.from_user.id
@@ -253,17 +211,6 @@ def register_admin_handlers(bot: BotType) -> None:
         except Exception as e:
             print(f"Error in save_training_data: {e}")
             bot.reply_to(message, "❌ Произошла ошибка при сохранении тренировки")
-
-    def show_missing_fields(message: Message, training_data: TrainingData) -> None:
-        """Показывает список отсутствующих полей"""
-        missing = []
-        if not training_data.date_time: missing.append("дата")
-        if not training_data.duration: missing.append("длительность")
-        if not training_data.kind: missing.append("тип")
-        if not training_data.location: missing.append("место")
-        if not training_data.max_participants: missing.append("количество участников")
-        if not training_data.price: missing.append("цена")
-        bot.reply_to(message, f"❌ Не все данные заполнены. Отсутствуют: {', '.join(missing)}")
 
     def update_existing_training(trainer_db: TrainerDB, training_id: int, 
                                training_data: TrainingData, message: Message) -> bool:
@@ -425,14 +372,6 @@ def register_admin_handlers(bot: BotType) -> None:
             f"📍 Место: {training.location}\n"
             f"💰 Стоимость: {training.price}₽"
         )
-
-    def create_forum_topic(trainer_db: TrainerDB, training_id: int, message: Message) -> None:
-        """Создает тему на форуме для новой тренировки"""
-        training = trainer_db.get_training_details(training_id)
-        if training:
-            topic_id = forum_manager.create_training_topic(training, message.from_user.username)
-            if topic_id:
-                trainer_db.set_topic_id(training_id, topic_id)
 
     @bot.callback_query_handler(func=lambda call: call.data == "edit_training")
     def edit_training(call: CallbackQuery):
@@ -598,35 +537,26 @@ def register_admin_handlers(bot: BotType) -> None:
             admin_username = call.from_user.username
             trainer_db = TrainerDB(admin_username)
             
-            print(f"[DEBUG] Opening training {training_id} by admin {admin_username}")
             
             # Получаем данные тренировки
             training = trainer_db.get_training_details(training_id)
             if not training:
-                print(f"[DEBUG] Training {training_id} not found")
                 bot.answer_callback_query(call.id, "Ошибка: тренировка не найдена")
                 return
                 
-            print(f"[DEBUG] Training details: {training.__dict__}")
             
             # Получаем список автозаписей
             auto_signup_users = trainer_db.get_auto_signup_requests(training_id)
-            print(f"[DEBUG] Found {len(auto_signup_users)} auto signup requests: {auto_signup_users}")
             max_auto_slots = training.max_participants // 2
-            print(f"[DEBUG] Max auto slots: {max_auto_slots}")
             
             # Обрабатываем автозаписи
             for username in auto_signup_users[:max_auto_slots]:
-                print(f"[DEBUG] Processing auto signup for {username}")
                 # Проверяем, не записан ли уже пользователь
                 if trainer_db.is_participant(username, training_id):
-                    print(f"[DEBUG] User {username} is already a participant")
                     continue
                 
                 # Добавляем участника
-                print(f"[DEBUG] Attempting to add {username} as participant")
                 if trainer_db.add_participant(username, training_id):
-                    print(f"[DEBUG] Successfully added {username} to participants")
                     
                     # Проверяем, действительно ли пользователь добавлен
                     if trainer_db.is_participant(username, training_id):
@@ -637,7 +567,6 @@ def register_admin_handlers(bot: BotType) -> None:
                     # Уменьшаем количество автозаписей
                     user_db = TrainerDB(username)
                     old_balance = user_db.get_auto_signups_balance(username)
-                    print(f"[DEBUG] Current auto signup balance for {username}: {old_balance}")
                     
                     if user_db.decrease_auto_signups(username):
                         new_balance = user_db.get_auto_signups_balance(username)
@@ -662,7 +591,6 @@ def register_admin_handlers(bot: BotType) -> None:
                         )
                         try:
                             bot.send_message(user_id, notification)
-                            print(f"[DEBUG] Notification sent to {username}")
                         except Exception as e:
                             print(f"[DEBUG] Error notifying user {username}: {e}")
                 else:
@@ -670,11 +598,9 @@ def register_admin_handlers(bot: BotType) -> None:
             
             # Проверяем список участников после автозаписи
             participants = trainer_db.get_participants_by_training_id(training_id)
-            print(f"[DEBUG] Participants after auto signup processing: {participants}")
             
             # Открываем запись
             trainer_db.set_training_open(training_id)
-            print("[DEBUG] Training set to OPEN status")
             
             # Обновляем тему в форуме
             topic_id = trainer_db.get_topic_id(training_id)
@@ -704,8 +630,10 @@ def register_admin_handlers(bot: BotType) -> None:
             
             # Отправляем уведомления всем пользователям, кроме тех, кто уже записан через автозапись
             for user in users:
+                us = admin_db.get_user_info(user[0])
+
                 try:
-                    if user[0] != call.from_user.id and user[1] not in auto_signup_users:
+                    if us not in auto_signup_users and us.is_admin == False:
                         bot.send_message(user[0], notification, reply_markup=markup)
                 except Exception as e:
                     print(f"Ошибка отправки уведомления пользователю {user[0]}: {e}")
@@ -713,9 +641,7 @@ def register_admin_handlers(bot: BotType) -> None:
             bot.answer_callback_query(call.id, "Запись успешно открыта!")
             
         except Exception as e:
-            print(f"[DEBUG] Error in open_training: {e}")
             import traceback
-            print(f"[DEBUG] Full traceback: {traceback.format_exc()}")
             bot.answer_callback_query(call.id, "Произошла ошибка при открытии записи")
 
     @bot.message_handler(commands=["stats"])
@@ -926,49 +852,6 @@ def register_admin_handlers(bot: BotType) -> None:
                 participants = trainer_db.get_participants_by_training_id(training_id)
                 forum_manager.update_participants_list(training, participants, topic_id, trainer_db)
 
-    @bot.message_handler(commands=["add_training"])
-    def add_training(message: Message):
-        if not admin_db.is_admin(message.from_user.username):
-            return
-            
-        # Проверяем наличие реквизитов
-        payment_details = admin_db.get_payment_details(message.from_user.username)
-        if payment_details == "Реквизиты не указаны":
-            bot.reply_to(message, "⚠️ Сначала установите реквизиты для оплаты с помощью /set_payment_details")
-            return
-            
-        # Инициализируем данные тренировки
-        user_id = message.from_user.id
-        training_creation_data[user_id] = TrainingData()
-        
-        # Запрашиваем дату и время
-        msg = bot.reply_to(message, "Введите дату и время тренировки (формат: 'YYYY-MM-DD HH:MM')")
-        bot.register_next_step_handler(msg, get_training_datetime, "create", None)
-
-    def get_training_datetime(message: Message, action: str, training_id: Optional[int]) -> None:
-        user_id = message.from_user.id
-        try:
-            date_time = validate_datetime(message.text)
-            training_creation_data[user_id].date_time = date_time.strftime('%Y-%m-%d %H:%M')
-            msg = bot.send_message(message.chat.id, "Введите максимальное количество участников:")
-            bot.register_next_step_handler(msg, get_training_max_participants, action, training_id)
-        except ValidationError as e:
-            bot.send_message(message.chat.id, f"Ошибка: {str(e)}")
-            msg = bot.send_message(message.chat.id, "Введите дату и время тренировки (формат: 'YYYY-MM-DD HH:MM'):")
-            bot.register_next_step_handler(msg, get_training_datetime, action, training_id)
-
-    def get_training_max_participants(message: Message, action: str, training_id: Optional[int]) -> None:
-        user_id = message.from_user.id
-        try:
-            max_participants = int(message.text.strip())
-            training_creation_data[user_id].max_participants = max_participants
-            msg = bot.send_message(message.chat.id, "Введите длительность тренировки (в минутах):")
-            bot.register_next_step_handler(msg, get_training_duration, action, training_id)
-        except ValueError:
-            bot.send_message(message.chat.id, "Ошибка: введите число")
-            msg = bot.send_message(message.chat.id, "Введите максимальное количество участников:")
-            bot.register_next_step_handler(msg, get_training_max_participants, action, training_id)
-
     def get_training_duration(message: Message, action: str, training_id: Optional[int]) -> None:
         user_id = message.from_user.id
         try:
@@ -1042,16 +925,6 @@ def register_admin_handlers(bot: BotType) -> None:
             training = trainer_db.get_training_details(training_id)
             participants = trainer_db.get_participants_by_training_id(training_id)
             forum_manager.update_participants_list(training, participants, topic_id, trainer_db)
-
-    @bot.message_handler(commands=["set_payment_details"])
-    def set_payment_details_handler(message: Message):
-        """Устанавливает реквизиты для оплаты"""
-        if not admin_db.is_admin(message.from_user.username):
-            return
-            
-        # Запрашиваем реквизиты
-        msg = bot.reply_to(message, "Отправьте реквизиты для оплаты:")
-        bot.register_next_step_handler(msg, process_payment_details)
 
     def process_payment_details(message: Message):
         """Обрабатывает полученные реквизиты"""
@@ -1362,31 +1235,6 @@ def register_admin_handlers(bot: BotType) -> None:
             message += f"@{admin[0]}\n"
             
         bot.send_message(call.message.chat.id, message)
-
-    @bot.callback_query_handler(func=lambda call: call.data == "delete_training")
-    def show_trainings_for_deletion(call: CallbackQuery):
-        """Показывает список тренировок для удаления"""
-        if not admin_db.is_admin(call.from_user.username):
-            return
-            
-        trainer_db = TrainerDB(call.from_user.username)
-        trainings = []
-        training_ids = trainer_db.get_training_ids()
-        
-        for training_id in training_ids:
-            if training := trainer_db.get_training_details(training_id[0]):
-                trainings.append(training)
-        
-        if not trainings:
-            bot.send_message(call.message.chat.id, "У вас нет активных тренировок")
-            return
-            
-        markup = get_trainings_keyboard(trainings, "delete")
-        bot.send_message(
-            call.message.chat.id,
-            "Выберите тренировку для удаления:",
-            reply_markup=markup
-        )
 
     @bot.callback_query_handler(func=lambda call: call.data == "remove_participant")
     def show_trainings_for_participant_removal(call: CallbackQuery):

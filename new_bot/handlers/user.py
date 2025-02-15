@@ -736,15 +736,12 @@ def register_user_handlers(bot: BotType) -> None:
     def accept_reserve(call: CallbackQuery):
         """Обработчик принятия места из резерва"""
         try:
-            print(f"[DEBUG] Processing accept_reserve callback: {call.data}")
             training_id = int(call.data.split("_")[-1])
             username = call.from_user.username
             
-            print(f"[DEBUG] Username: {username}, Training ID: {training_id}")
             
             admin_username = find_training_admin(training_id)
             if not admin_username:
-                print("[DEBUG] Admin not found")
                 bot.answer_callback_query(call.id, "Тренировка не найдена")
                 return
             
@@ -752,12 +749,10 @@ def register_user_handlers(bot: BotType) -> None:
             training = trainer_db.get_training_details(training_id)
             
             if not training:
-                print("[DEBUG] Training not found")
                 bot.answer_callback_query(call.id, "Тренировка не найдена")
                 return
             
             if trainer_db.accept_reserve_spot(username, training_id):
-                print("[DEBUG] Spot accepted successfully")
                 bot.answer_callback_query(call.id, "✅ Вы подтвердили участие в тренировке!", show_alert=True)
                 
                 # Отправляем подтверждение
@@ -777,7 +772,6 @@ def register_user_handlers(bot: BotType) -> None:
                 
                 bot.delete_message(call.message.chat.id, call.message.message_id)
             else:
-                print("[DEBUG] Failed to accept spot")
                 bot.answer_callback_query(call.id, "Не удалось подтвердить участие", show_alert=True)
             
         except Exception as e:

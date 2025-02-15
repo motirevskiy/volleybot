@@ -59,6 +59,19 @@ class AdminDB(BaseDB):
 
     def get_all_users(self) -> List[Tuple[int]]:
         return self.fetch_all("SELECT user_id FROM users")
+    
+    def get_user_info(self, user_id: int) -> Optional[User]:
+        result = self.fetch_one(
+            "SELECT user_id, username FROM users WHERE user_id = ?", 
+            (user_id,)
+        )
+        if not result:
+            return None
+        return User(
+            id=result[0],
+            username=result[1],
+            is_admin=self.is_admin(result[1])
+        )
 
     def get_user(self, user_id: int) -> Optional[User]:
         result = self.fetch_one(

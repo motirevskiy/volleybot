@@ -165,27 +165,21 @@ class TrainerDB(BaseDB):
     def add_participant(self, username: str, training_id: int) -> bool:
         """Добавляет участника в тренировку"""
         try:
-            print(f"[DEBUG] Adding participant {username} to training {training_id}")
             
             # Проверяем существование тренировки
             training = self.get_training_details(training_id)
             if not training:
-                print(f"[DEBUG] Training {training_id} not found")
                 return False
             
-            print(f"[DEBUG] Training found: {training.__dict__}")
             
             # Проверяем количество текущих участников
             current_participants = self.get_participants_by_training_id(training_id)
-            print(f"[DEBUG] Current participants: {current_participants}")
             
             if len(current_participants) >= training.max_participants:
-                print(f"[DEBUG] Training is full: {len(current_participants)}/{training.max_participants}")
                 return False
             
             # Проверяем, не записан ли уже пользователь
             if self.is_participant(username, training_id):
-                print(f"[DEBUG] User {username} is already a participant")
                 return False
             
             # Добавляем участника
@@ -196,16 +190,12 @@ class TrainerDB(BaseDB):
             
             # Проверяем успешность добавления
             if self.is_participant(username, training_id):
-                print(f"[DEBUG] Successfully added {username} as participant")
                 return True
             else:
-                print(f"[DEBUG] Failed to verify participant addition for {username}")
                 return False
             
         except Exception as e:
-            print(f"[DEBUG] Error in add_participant: {e}")
             import traceback
-            print(f"[DEBUG] Full traceback: {traceback.format_exc()}")
             return False
 
     def remove_participant(self, username: str, training_id: int) -> bool:
@@ -223,13 +213,11 @@ class TrainerDB(BaseDB):
 
     def get_participants_by_training_id(self, training_id: int) -> List[str]:
         """Получает список участников тренировки"""
-        print(f"[DEBUG] Getting participants for training {training_id}")
         result = self.fetch_all('''
             SELECT username, status FROM participants
             WHERE training_id = ?
             ORDER BY rowid
         ''', (training_id,))
-        print(f"[DEBUG] Raw participants data: {result}")
         # Правильно извлекаем username из Row объекта
         participants = []
         for row in result:
@@ -520,7 +508,6 @@ class TrainerDB(BaseDB):
 
     def offer_spot_to_next_in_reserve(self, training_id: int) -> Optional[str]:
         """Предлагает место следующему участнику в резерве"""
-        print(f"[DEBUG] Offering spot for training {training_id}")
         self.debug_participant_info(None, training_id)  # Перед изменениями
         
         next_in_reserve = self.fetch_one('''
@@ -530,11 +517,9 @@ class TrainerDB(BaseDB):
             LIMIT 1
         ''', (training_id,))
         
-        print(f"[DEBUG] Next in reserve: {next_in_reserve}")
         
         if next_in_reserve:
             username = next_in_reserve[0]
-            print(f"[DEBUG] Adding {username} to participants with PENDING status")
             
             try:
                 # Добавляем участника в основной список со статусом PENDING
@@ -550,13 +535,10 @@ class TrainerDB(BaseDB):
                     SELECT status FROM participants
                     WHERE username = ? AND training_id = ? AND status = 'PENDING'
                 ''', (username, training_id))
-                print(f"[DEBUG] Added participant check: {added}")
                 
                 if added:
-                    print(f"[DEBUG] Removing {username} from reserve")
                     self.remove_from_reserve(username, training_id)
                     
-                    print(f"[DEBUG] Starting cleanup timer for {username}")
                     self.schedule_pending_cleanup(username, training_id)
                     
                     return username
@@ -593,7 +575,6 @@ class TrainerDB(BaseDB):
 
     def accept_reserve_spot(self, username: str, training_id: int) -> bool:
         """Принимает приглашение, убирая статус PENDING"""
-        print(f"[DEBUG] Accepting spot for {username} in training {training_id}")
         self.debug_participant_info(username, training_id)  # Перед изменениями
         
         try:
@@ -838,7 +819,6 @@ class TrainerDB(BaseDB):
             SELECT status FROM participants
             WHERE username = ? AND training_id = ?
         ''', (username, training_id))
-        print(f"[DEBUG] Status for {username} in training {training_id}: {result}")
         # Правильно извлекаем статус из Row объекта
         if result:
             return dict(result)['status']
