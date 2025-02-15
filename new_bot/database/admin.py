@@ -11,42 +11,58 @@ class AdminDB(BaseDB):
         """Инициализирует базу данных"""
         self.execute_query('''
         CREATE TABLE IF NOT EXISTS admins (
-            username TEXT PRIMARY KEY,
+            username TEXT,
             user_id INTEGER,
+            channel_id INTEGER,
             payment_details TEXT DEFAULT 'Реквизиты не указаны',
-            invite_limit INTEGER DEFAULT 0
+            invite_limit INTEGER DEFAULT 0,
+            PRIMARY KEY (username, channel_id)
         )
         ''')
+        
         self.execute_query('''
         CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY,
             user_id INTEGER
         )
         ''')
-        
-        # Проверяем существующие колонки
-        columns = self.fetch_all("PRAGMA table_info(admins)")
-        column_names = [column[1] for column in columns]
-        
-        # Добавляем колонку payment_details, если её нет
-        if 'payment_details' not in column_names:
-            self.execute_query('ALTER TABLE admins ADD COLUMN payment_details TEXT DEFAULT "Реквизиты не указаны"')
 
-        # Добавляем колонку invite_limit, если её нет
-        if 'invite_limit' not in column_names:
-            self.execute_query('ALTER TABLE admins ADD COLUMN invite_limit INTEGER DEFAULT 0')
+    def is_admin(self, username: str, channel_id: int) -> bool:
+        """Проверяет, является ли пользователь админом канала"""
+        return self.fetch_one(
+            "SELECT 1 FROM admins WHERE username = ? AND channel_id = ?",
+            (username, channel_id)
+        ) is not None
 
-        # Обновляем существующие записи
-        self.execute_query('UPDATE admins SET invite_limit = 0 WHERE invite_limit IS NULL')
+    def add_admin(self, username: str, channel_id: int) -> None:
+        """Добавляет администратора для конкретного канала"""
+        self.execute_query(
+            "INSERT OR IGNORE INTO admins (username, channel_id) VALUES (?, ?)",
+            (username, channel_id)
+        )
 
-    def is_admin(self, username: str) -> bool:
-        return self.fetch_one("SELECT 1 FROM admins WHERE username = ?", (username,)) is not None
+    def remove_admin(self, username: str, channel_id: int) -> None:
+        """Удаляет администратора из канала"""
+        self.execute_query(
+            "DELETE FROM admins WHERE username = ? AND channel_id = ?",
+            (username, channel_id)
+        )
 
-    def add_admin(self, username: str) -> None:
-        self.execute_query("INSERT INTO admins (username) VALUES (?)", (username,))
+    def get_admin_channel(self, username: str) -> Optional[int]:
+        """Получает ID канала, которым управляет админ"""
+        result = self.fetch_one(
+            "SELECT channel_id FROM admins WHERE username = ?",
+            (username,)
+        )
+        return result[0] if result else None
 
-    def remove_admin(self, username: str) -> None:
-        self.execute_query("DELETE FROM admins WHERE username = ?", (username,))
+    def get_channel_admins(self, channel_id: int) -> List[str]:
+        """Получает список администраторов канала"""
+        result = self.fetch_all(
+            "SELECT username FROM admins WHERE channel_id = ?",
+            (channel_id,)
+        )
+        return [row[0] for row in result]
 
     def get_all_admins(self) -> List[Tuple[str]]:
         return self.fetch_all("SELECT username FROM admins")
@@ -70,7 +86,7 @@ class AdminDB(BaseDB):
         return User(
             id=result[0],
             username=result[1],
-            is_admin=self.is_admin(result[1])
+            is_admin=self.is_admin(result[1], self.get_admin_channel(result[1]))
         )
 
     def get_user(self, user_id: int) -> Optional[User]:
@@ -83,7 +99,7 @@ class AdminDB(BaseDB):
         return User(
             id=result[0],
             username=result[1],
-            is_admin=self.is_admin(result[1])
+            is_admin=self.is_admin(result[1], self.get_admin_channel(result[1]))
         )
 
     def set_payment_details(self, username: str, details: str):

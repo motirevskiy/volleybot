@@ -14,6 +14,7 @@ def register_common_handlers(bot: BotType) -> None:
             "Добро пожаловать! Выберите действие:",
             reply_markup=markup
         )
+        admin_db.add_user(message.from_user.id, message.from_user.username)
 
     @bot.message_handler(commands=['chatid'])
     def get_chat_id(message: Message):

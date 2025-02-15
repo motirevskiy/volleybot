@@ -4,8 +4,15 @@ from typing import Optional, List, Dict, Union
 from telebot.types import Message, CallbackQuery
 
 @dataclass
+class Channel:
+    id: int
+    title: str
+    added_date: datetime
+
+@dataclass
 class Training:
     id: int
+    channel_id: int  # Добавляем привязку к каналу
     date_time: datetime
     duration: int
     kind: str
@@ -25,6 +32,7 @@ class Training:
         date_time, duration, type_, location, status, max_participants = row
         return cls(
             id=0,
+            channel_id=0,
             date_time=datetime.strptime(date_time, '%Y-%m-%d %H:%M'),
             duration=int(duration),
             kind=type_,
@@ -43,6 +51,7 @@ class User:
 @dataclass
 class TrainingData:
     """Класс для хранения данных при создании/редактировании тренировки"""
+    channel_id: Optional[int] = None
     date_time: Optional[str] = None
     duration: Optional[int] = None
     kind: Optional[str] = None
@@ -52,6 +61,7 @@ class TrainingData:
 
     def is_complete(self) -> bool:
         return all([
+            self.channel_id,
             self.date_time, 
             self.duration, 
             self.kind,
@@ -62,6 +72,7 @@ class TrainingData:
 
     def to_tuple(self) -> tuple:
         return (
+            self.channel_id,
             self.date_time,
             self.duration,
             self.kind,

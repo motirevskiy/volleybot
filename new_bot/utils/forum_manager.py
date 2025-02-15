@@ -7,7 +7,6 @@ from new_bot.database.trainer import TrainerDB
 class ForumManager:
     def __init__(self, bot):
         self.bot = bot
-        self.chat_id = CHANNEL_ID  # ID группового чата
 
     def create_training_topic(self, training: Training, admin_username: str) -> int:
         """Создает новую тему для тренировки в форуме"""
@@ -18,9 +17,9 @@ class ForumManager:
         )
         # Создаем новую тему в форуме
         result = self.bot.create_forum_topic(
-            self.chat_id,
+            training.channel_id,  # Используем channel_id из тренировки
             name=topic_name,
-            icon_color=0x6FB9F0  # Голубой цвет для тем
+            icon_color=0x6FB9F0
         )
         return result.message_thread_id
 
@@ -37,7 +36,7 @@ class ForumManager:
             f"📝 Статус: {'Открыта' if training.status == 'OPEN' else 'Закрыта'}"
         )
         self.bot.send_message(
-            self.chat_id,
+            training.channel_id,  # Используем channel_id из тренировки
             message,
             message_thread_id=topic_id
         )
@@ -90,7 +89,7 @@ class ForumManager:
         # Отправляем сообщение в канал
         try:
             self.bot.send_message(
-                self.chat_id,
+                training.channel_id,  # Используем channel_id из тренировки
                 message,
                 message_thread_id=topic_id
             )
@@ -99,58 +98,61 @@ class ForumManager:
 
     def send_training_update(self, training: Training, topic_id: int, update_type: str) -> None:
         """Отправляет уведомление об изменении тренировки"""
-        if update_type == "open":
-            message = "🟢 Открыта запись на тренировку!"
-            # При открытии обновляем название без [ЗАКРЫТО]
-            new_topic_name = (
-                f"🏋️‍♂️ {training.kind} | "
-                f"📅 {training.date_time.strftime('%d.%m.%Y %H:%M')} | "
-                f"📍 {training.location}"
-            )
-            try:
-                self.bot.edit_forum_topic(
-                    self.chat_id,
-                    topic_id,
-                    name=new_topic_name
+        try:
+            if update_type == "open":
+                message = "🟢 Открыта запись на тренировку!"
+                # При открытии обновляем название без [ЗАКРЫТО]
+                new_topic_name = (
+                    f"🏋️‍♂️ {training.kind} | "
+                    f"📅 {training.date_time.strftime('%d.%m.%Y %H:%M')} | "
+                    f"📍 {training.location}"
                 )
-            except Exception as e:
-                print(f"Ошибка при обновлении названия темы: {e}")
+                try:
+                    self.bot.edit_forum_topic(
+                        training.channel_id,
+                        topic_id,
+                        name=new_topic_name
+                    )
+                except Exception as e:
+                    # Игнорируем ошибку TOPIC_NOT_MODIFIED
+                    if "TOPIC_NOT_MODIFIED" not in str(e):
+                        print(f"Ошибка при обновлении названия темы: {e}")
                 
-        elif update_type == "close":
-            message = "🔴 Запись на тренировку закрыта"
-            # При закрытии добавляем [ЗАКРЫТО]
-            new_topic_name = (
-                f"[ЗАКРЫТО] 🏋️‍♂️ {training.kind} | "
-                f"📅 {training.date_time.strftime('%d.%m.%Y %H:%M')} | "
-                f"📍 {training.location}"
-            )
-            try:
-                self.bot.edit_forum_topic(
-                    self.chat_id,
-                    topic_id,
-                    name=new_topic_name
+            elif update_type == "close":
+                message = "🔴 Запись на тренировку закрыта"
+                # При закрытии добавляем [ЗАКРЫТО]
+                new_topic_name = (
+                    f"[ЗАКРЫТО] 🏋️‍♂️ {training.kind} | "
+                    f"📅 {training.date_time.strftime('%d.%m.%Y %H:%M')} | "
+                    f"📍 {training.location}"
                 )
-            except Exception as e:
-                print(f"Ошибка при обновлении названия темы: {e}")
+                try:
+                    self.bot.edit_forum_topic(
+                        training.channel_id,  # Используем channel_id из тренировки
+                        topic_id,
+                        name=new_topic_name
+                    )
+                except Exception as e:
+                    print(f"Ошибка при обновлении названия темы: {e}")
                 
-        elif update_type == "edit":
-            # При редактировании используем статус тренировки
-            new_topic_name = (
-                f"🏋️‍♂️ {training.kind} | "
-                f"📅 {training.date_time.strftime('%d.%m.%Y %H:%M')} | "
-                f"📍 {training.location}"
-            )
-            if training.status != 'OPEN':
-                new_topic_name = f"[ЗАКРЫТО] {new_topic_name}"
-                
-            try:
-                self.bot.edit_forum_topic(
-                    self.chat_id,
-                    topic_id,
-                    name=new_topic_name
+            elif update_type == "edit":
+                # При редактировании используем статус тренировки
+                new_topic_name = (
+                    f"��️‍♂️ {training.kind} | "
+                    f"📅 {training.date_time.strftime('%d.%m.%Y %H:%M')} | "
+                    f"📍 {training.location}"
                 )
-            except Exception as e:
-                print(f"Ошибка при обновлении названия темы: {e}")
+                if training.status != 'OPEN':
+                    new_topic_name = f"[ЗАКРЫТО] {new_topic_name}"
+                
+                try:
+                    self.bot.edit_forum_topic(
+                        training.channel_id,  # Используем channel_id из тренировки
+                        topic_id,
+                        name=new_topic_name
+                    )
+                except Exception as e:
+                    print(f"Ошибка при обновлении названия темы: {e}")
             
             message = (
                 f"📝 Тренировка была изменена:\n"
@@ -161,8 +163,10 @@ class ForumManager:
                 f"👥 Максимум участников: {training.max_participants}"
             )
         
-        self.bot.send_message(
-            self.chat_id,
-            message,
-            message_thread_id=topic_id
-        )
+            self.bot.send_message(
+                training.channel_id,  # Используем channel_id из тренировки
+                message,
+                message_thread_id=topic_id
+            )
+        except Exception as e:
+            print(f"Ошибка при отправке уведомления об изменении тренировки: {e}")

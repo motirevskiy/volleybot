@@ -4,6 +4,7 @@ import time
 from telebot.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, Message
 from new_bot.database.admin import AdminDB
 from new_bot.database.trainer import TrainerDB
+from new_bot.database.channel import ChannelDB
 from new_bot.utils.messages import create_schedule_message
 from new_bot.utils.keyboards import get_trainings_keyboard
 from new_bot.types import Training, BotType
@@ -11,8 +12,9 @@ from typing import List, Tuple, Optional
 from new_bot.utils.forum_manager import ForumManager
 from datetime import datetime, timedelta
 
-# Создаем экземпляр AdminDB
+# Создаем экземпляры баз данных
 admin_db = AdminDB()
+channel_db = ChannelDB()
 
 def find_training_admin(training_id: int) -> Optional[str]:
     """Находит админа, создавшего тренировку"""
@@ -30,6 +32,9 @@ def cancel_training_handler(call: CallbackQuery, bot: BotType, forum_manager: Fo
         admin_username = parts[1]
         training_id = int(parts[2])
         username = call.from_user.username
+
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+
         
         if not username:
             bot.send_message(call.message.chat.id, "Не удалось определить ваш username.")
@@ -146,6 +151,12 @@ def register_user_handlers(bot: BotType) -> None:
         trainer_db = TrainerDB(admin_username)
         training = trainer_db.get_training_details(training_id)
         
+        # Получаем информацию о группе
+        group = channel_db.get_channel(training.channel_id)
+        if not group:
+            bot.reply_to(message, "❌ Ошибка: группа не найдена")
+            return
+        
         for friend_username in usernames:
             print(f"Проверяем пользователя: {friend_username}")  # Отладка
             # Проверяем существование пользователя
@@ -176,7 +187,8 @@ def register_user_handlers(bot: BotType) -> None:
                 )
                 
                 invite_message = (
-                    f"🎟 Вас пригласил @{admin_username} на тренировку:\n\n"
+                    f"🎟 Вас пригласил @{message.from_user.username} на тренировку:\n\n"
+                    f"👥 Группа: {group[1]}\n"
                     f"📅 Дата: {training.date_time.strftime('%d.%m.%Y %H:%M')}\n"
                     f"🏋️‍♂️ Тип: {training.kind}\n"
                     f"📍 Место: {training.location}\n"
@@ -206,52 +218,166 @@ def register_user_handlers(bot: BotType) -> None:
 
     @bot.callback_query_handler(func=lambda call: call.data == "get_schedule")
     def get_schedule(call: CallbackQuery):
-        """Показывает расписание тренировок"""
+        """Показывает список доступных групп"""
+        # Получаем список всех групп
+        groups = channel_db.get_all_channels()
+        if not groups:
+            bot.send_message(call.message.chat.id, "Нет доступных групп с тренировками")
+            return
+
+        # Создаем клавиатуру с группами
+        markup = InlineKeyboardMarkup()
+        for group_id, title in groups:
+            markup.add(InlineKeyboardButton(
+                title,
+                callback_data=f"schedule_group_{group_id}"
+            ))
+
+        bot.send_message(
+            call.message.chat.id,
+            "Выберите группу для просмотра расписания:",
+            reply_markup=markup
+        )
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("schedule_group_"))
+    def show_group_schedule(call: CallbackQuery):
+        """Показывает расписание тренировок выбранной группы"""
+        group_id = int(call.data.split("_")[2])
+        
+        # Получаем информацию о группе
+        group = channel_db.get_channel(group_id)
+        if not group:
+            bot.answer_callback_query(call.id, "Группа не найдена")
+            return
+
+        # Получаем список администраторов группы
+        admins = admin_db.get_channel_admins(group_id)
+        
         all_trainings = []
-        admins_map = {}  # Словарь для хранения соответствия training_id -> admin_username
+        for admin in admins:
+            trainer_db = TrainerDB(admin)
+            trainings = trainer_db.get_trainings_for_channel(group_id)
+            all_trainings.extend(trainings)
+
+        if not all_trainings:
+            bot.send_message(
+                call.message.chat.id,
+                f"В группе {group[1]} пока нет тренировок"
+            )
+            return
+
+        # Сортируем тренировки по дате
+        all_trainings.sort(key=lambda x: x.date_time)
         
-        # Получаем список всех тренировок от всех админов
-        for admin in admin_db.get_all_admins():
-            trainer_db = TrainerDB(admin[0])
-            trainings = trainer_db.get_training_ids()
-            if trainings:
-                for training_id in trainings:
-                    if training := trainer_db.get_training_details(training_id[0]):
-                        all_trainings.append(training)
-                        admins_map[training.id] = admin[0]  # Сохраняем соответствие
-        
-        message = create_schedule_message(all_trainings, admins_map)
+        message = f"Расписание тренировок группы {group[1]}:\n\n"
+        for training in all_trainings:
+            message += (
+                f"📅 {training.date_time.strftime('%d.%m.%Y %H:%M')}\n"
+                f"🏋️‍♂️ {training.kind}\n"
+                f"⏱ {training.duration} минут\n"
+                f"📍 {training.location}\n"
+                f"💰 {training.price}₽\n"
+                f"👥 Участники: {len(trainer_db.get_participants_by_training_id(training.id))}/{training.max_participants}\n"
+                f"📝 Статус: {'Открыта' if training.status == 'OPEN' else 'Закрыта'}\n"
+                "➖➖➖➖➖➖➖➖➖➖\n"
+            )
+
         bot.send_message(call.message.chat.id, message)
 
     @bot.callback_query_handler(func=lambda call: call.data == "sign_up_training")
-    def sign_up_training(call: CallbackQuery) -> None:
-        admins = admin_db.get_all_admins()
-        if not admins:
-            bot.send_message(call.message.chat.id, "Нет доступных тренировок.")
+    def show_groups_for_signup(call: CallbackQuery):
+        """Показывает список групп для записи на тренировку"""
+        groups = channel_db.get_all_channels()
+        if not groups:
+            bot.send_message(call.message.chat.id, "Нет доступных групп с тренировками")
             return
 
-        trainings: List[Tuple[int, str, str, str]] = []
+        markup = InlineKeyboardMarkup()
+        for group_id, title in groups:
+            # Проверяем, есть ли открытые тренировки в группе
+            has_open_trainings = False
+            admins = admin_db.get_channel_admins(group_id)
+            for admin in admins:
+                trainer_db = TrainerDB(admin)
+                trainings = trainer_db.get_trainings_for_channel(group_id)
+                if any(t.status == "OPEN" for t in trainings):
+                    has_open_trainings = True
+                    break
+
+            if has_open_trainings:
+                markup.add(InlineKeyboardButton(
+                    title,
+                    callback_data=f"signup_group_{group_id}"
+                ))
+
+        if not markup.keyboard:
+            bot.send_message(call.message.chat.id, "Нет групп с открытыми тренировками")
+            return
+
+        bot.send_message(
+            call.message.chat.id,
+            "Выберите группу для записи на тренировку:",
+            reply_markup=markup
+        )
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("signup_group_"))
+    def show_group_trainings_for_signup(call: CallbackQuery):
+        """Показывает список тренировок для записи в выбранной группе"""
+        group_id = int(call.data.split("_")[2])
+        
+        # Получаем информацию о группе
+        group = channel_db.get_channel(group_id)
+        if not group:
+            bot.answer_callback_query(call.id, "Группа не найдена")
+            return
+        
+        # Получаем список открытых тренировок для группы
+        open_trainings = []
+        admins = admin_db.get_channel_admins(group_id)
+        
         for admin in admins:
-            admin_id = admin[0]
-            trainer_db = TrainerDB(admin_id)
-            training_ids = trainer_db.get_training_ids()
-
-            for id in training_ids:
-                details = trainer_db.get_training_details(id[0])
-                if details and details.status == "OPEN":
-                    trainings.append((
-                        details.id,
-                        details.date_time.strftime('%Y-%m-%d %H:%M'),
-                        details.kind,
-                        details.location
-                    ))
-
-        if not trainings:
-            bot.send_message(call.message.chat.id, "Нет открытых тренировок для записи.")
+            trainer_db = TrainerDB(admin)
+            trainings = trainer_db.get_trainings_for_channel(group_id)
+            for training in trainings:
+                if training.status == "OPEN":
+                    open_trainings.append((training, admin))
+        
+        if not open_trainings:
+            bot.send_message(
+                call.message.chat.id,
+                f"В группе {group[1]} нет открытых тренировок"
+            )
             return
+        
+        # Создаем клавиатуру с тренировками
+        markup = InlineKeyboardMarkup()
+        for training, admin in open_trainings:
+            participants = trainer_db.get_participants_by_training_id(training.id)
+            button_text = (
+                f"{training.date_time.strftime('%d.%m %H:%M')} | "
+                f"{training.kind} | "
+                f"{len(participants)}/{training.max_participants}"
+            )
+            markup.add(InlineKeyboardButton(
+                button_text,
+                callback_data=f"signup_training_{admin}_{training.id}"
+            ))
+        
+        bot.edit_message_text(
+            f"Доступные тренировки в группе {group[1]}:",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=markup
+        )
 
-        markup = get_trainings_keyboard(trainings, "signup")
-        bot.send_message(call.message.chat.id, "Выберите тренировку для записи:", reply_markup=markup)
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("signup_training_"))
+    def process_training_signup(call: CallbackQuery):
+        """Обрабатывает запись на тренировку"""
+        parts = call.data.split("_")
+        admin_username = parts[2]
+        training_id = int(parts[3])
+        
+        # Остальной код обработки записи...
 
     @bot.callback_query_handler(func=lambda call: call.data == "cancel_message_sign_up")
     def cancel_message_sign_up(call: CallbackQuery) -> None:
@@ -268,42 +394,50 @@ def register_user_handlers(bot: BotType) -> None:
     def show_user_trainings(call: CallbackQuery):
         username = call.from_user.username
         
-        # Получаем все тренировки пользователя (основной список и резерв)
-        trainings = []
-        reserve_trainings = []
+        # Получаем все группы
+        groups = channel_db.get_all_channels()
+        all_trainings = []
+        all_reserve_trainings = []
         
-        for admin in admin_db.get_all_admins():
-            trainer_db = TrainerDB(admin[0])
+        for group in groups:
+            group_id, group_title = group
+            admins = admin_db.get_channel_admins(group_id)
             
-            # Основные записи
-            user_trainings = trainer_db.get_trainings_for_user(username)
-            for training in user_trainings:
-                trainings.append((admin[0], training))
-            
-            # Записи в резерве
-            reserve = trainer_db.fetch_all('''
-                SELECT s.training_id, s.date_time, s.duration, 
-                s.kind, s.location, s.status, s.max_participants, 
-                r.position, r.status
-                FROM schedule s
-                JOIN reserve r ON s.training_id = r.training_id
-                WHERE r.username = ?
-            ''', (username,))
-            
-            for r in reserve:
-                training = Training.from_db_row(r[1:7])
-                training.id = r[0]
-                reserve_trainings.append((admin[0], training, r[7], r[8]))  # admin, training, position, status
+            for admin in admins:
+                trainer_db = TrainerDB(admin)
+                
+                # Основные записи
+                trainings = trainer_db.get_trainings_for_channel(group_id)
+                for training in trainings:
+                    if trainer_db.is_participant(username, training.id):
+                        all_trainings.append((group_title, admin, training))
+                
+                # Записи в резерве
+                reserve = trainer_db.fetch_all('''
+                    SELECT s.training_id, s.date_time, s.duration, 
+                    s.kind, s.location, s.status, s.max_participants, 
+                    r.position, r.status
+                    FROM schedule s
+                    JOIN reserve r ON s.training_id = r.training_id
+                    WHERE r.username = ? AND s.channel_id = ?
+                ''', (username, group_id))
+                
+                for r in reserve:
+                    training = Training.from_db_row(r[1:7])
+                    training.id = r[0]
+                    training.channel_id = group_id
+                    all_reserve_trainings.append((group_title, admin, training, r[7], r[8]))
         
-        if not trainings and not reserve_trainings:
+        if not all_trainings and not all_reserve_trainings:
             bot.send_message(call.message.chat.id, "У вас нет активных записей на тренировки")
             return
-            
+        
         # Отправляем список основных записей
-        if trainings:
+        if all_trainings:
             bot.send_message(call.message.chat.id, "Ваши записи на тренировки:")
-            for admin_username, training in trainings:
+            for group_title, admin_username, training in all_trainings:
                 message = (
+                    f"👥 Группа: {group_title}\n"
                     f"🏋️‍♂️ Тренировка: {training.kind}\n"
                     f"📅 Дата: {training.date_time.strftime('%d.%m.%Y %H:%M')}\n"
                     f"📍 Место: {training.location}\n"
@@ -311,6 +445,7 @@ def register_user_handlers(bot: BotType) -> None:
                     f"👤 Тренер: @{admin_username}"
                 )
                 
+                trainer_db = TrainerDB(admin_username)
                 row_buttons = []
                 
                 # Проверяем статус оплаты
@@ -336,12 +471,16 @@ def register_user_handlers(bot: BotType) -> None:
                 bot.send_message(call.message.chat.id, message, reply_markup=markup)
         
         # Отправляем список записей в резерве
-        if reserve_trainings:
+        if all_reserve_trainings:
             bot.send_message(call.message.chat.id, "\nВаши записи в резерве:")
-            for admin_username, training, position, status in reserve_trainings:
-                trainer_db = TrainerDB(admin_username)  # Создаем новый экземпляр для каждой тренировки
-                status_text = "⏳ В ожидании" if status == 'WAITING' else "❓ Предложено место" if status == 'OFFERED' else "❌ Отказано"
+            for group_title, admin_username, training, position, status in all_reserve_trainings:
+                status_text = (
+                    "⏳ В ожидании" if status == 'WAITING' 
+                    else "❓ Предложено место" if status == 'OFFERED' 
+                    else "❌ Отказано"
+                )
                 message = (
+                    f"👥 Группа: {group_title}\n"
                     f"🏋️‍♂️ Тренировка: {training.kind}\n"
                     f"📅 Дата: {training.date_time.strftime('%d.%m.%Y %H:%M')}\n"
                     f"📍 Место: {training.location}\n"
@@ -350,18 +489,13 @@ def register_user_handlers(bot: BotType) -> None:
                     f"📋 Позиция в резерве: {position}\n"
                     f"📝 Статус: {status_text}"
                 )
+                
                 markup = InlineKeyboardMarkup()
-                row_buttons = []
+                markup.add(InlineKeyboardButton(
+                    "Отменить резерв", 
+                    callback_data=f"cancel_reserve_{admin_username}_{training.id}"
+                ))
                 
-                # Кнопка отмены резерва
-                row_buttons.append(
-                    InlineKeyboardButton(
-                        "Отменить резерв", 
-                        callback_data=f"cancel_reserve_{admin_username}_{training.id}"
-                    )
-                )
-                
-                markup.row(*row_buttons)
                 bot.send_message(call.message.chat.id, message, reply_markup=markup)
 
     @bot.callback_query_handler(func=lambda call: call.data.startswith("swap_"))
@@ -397,46 +531,97 @@ def register_user_handlers(bot: BotType) -> None:
         )
 
     @bot.callback_query_handler(func=lambda call: call.data == "invite_friend")
-    def show_trainings_for_invite(call: CallbackQuery):
-        """Показывает список тренировок для приглашения друга"""
-        username = call.from_user.username
-        
-        # Собираем все открытые тренировки от всех админов
-        all_trainings = []
-        for admin in admin_db.get_all_admins():
-            trainer_db = TrainerDB(admin[0])
-            trainings = trainer_db.get_training_ids()
-            for training_id in trainings:
-                if training := trainer_db.get_training_details(training_id[0]):
-                    if training.status == "OPEN":
-                        all_trainings.append(training)
-        
-        if not all_trainings:
-            bot.send_message(
-                call.message.chat.id,
-                "Нет доступных тренировок для приглашения"
-            )
+    def show_groups_for_invite(call: CallbackQuery):
+        """Показывает список групп для приглашения друга"""
+        groups = channel_db.get_all_channels()
+        if not groups:
+            bot.send_message(call.message.chat.id, "Нет доступных групп с тренировками")
             return
-        
-        markup = get_trainings_keyboard(all_trainings, "invite_friend")
+
+        markup = InlineKeyboardMarkup()
+        for group_id, title in groups:
+            # Проверяем, есть ли открытые тренировки в группе
+            has_open_trainings = False
+            admins = admin_db.get_channel_admins(group_id)
+            for admin in admins:
+                trainer_db = TrainerDB(admin)
+                trainings = trainer_db.get_trainings_for_channel(group_id)
+                if any(t.status == "OPEN" for t in trainings):
+                    has_open_trainings = True
+                    break
+
+            if has_open_trainings:
+                markup.add(InlineKeyboardButton(
+                    title,
+                    callback_data=f"invite_group_{group_id}"
+                ))
+
+        if not markup.keyboard:
+            bot.send_message(call.message.chat.id, "Нет групп с открытыми тренировками")
+            return
+
         bot.send_message(
             call.message.chat.id,
-            "Выберите тренировку, на которую хотите пригласить друга:",
+            "Выберите группу для приглашения друга:",
             reply_markup=markup
         )
 
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("invite_friend_"))
-    def process_friend_invite_request(call: CallbackQuery):
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("invite_group_"))
+    def show_group_trainings_for_invite(call: CallbackQuery):
+        """Показывает список тренировок в группе для приглашения"""
+        group_id = int(call.data.split("_")[2])
+        
+        # Получаем информацию о группе
+        group = channel_db.get_channel(group_id)
+        if not group:
+            bot.answer_callback_query(call.id, "Группа не найдена")
+            return
+
+        # Получаем список открытых тренировок
+        admins = admin_db.get_channel_admins(group_id)
+        open_trainings = []
+        
+        for admin in admins:
+            trainer_db = TrainerDB(admin)
+            trainings = trainer_db.get_trainings_for_channel(group_id)
+            for training in trainings:
+                if training.status == "OPEN":
+                    # Добавляем информацию об админе к тренировке
+                    open_trainings.append((training, admin))
+
+        if not open_trainings:
+            bot.send_message(
+                call.message.chat.id,
+                f"В группе {group[1]} нет открытых тренировок"
+            )
+            return
+
+        # Создаем клавиатуру с тренировками
+        markup = InlineKeyboardMarkup()
+        for training, admin in open_trainings:
+            button_text = (
+                f"{training.date_time.strftime('%d.%m.%Y %H:%M')} | "
+                f"{training.kind} | {training.location}"
+            )
+            markup.add(InlineKeyboardButton(
+                button_text,
+                callback_data=f"invite_training_{training.id}_{admin}"
+            ))
+
+        bot.send_message(
+            call.message.chat.id,
+            f"Выберите тренировку в группе {group[1]} для приглашения друга:",
+            reply_markup=markup
+        )
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("invite_training_"))
+    def process_training_invite_request(call: CallbackQuery):
         """Обрабатывает выбор тренировки для приглашения"""
-        training_id = int(call.data.split("_")[2])
+        parts = call.data.split("_")
+        training_id = int(parts[2])
+        admin_username = parts[3]
         username = call.from_user.username
         
-        # Находим админа тренировки
-        admin_username = find_training_admin(training_id)
-        if not admin_username:
-            bot.send_message(call.message.chat.id, "Ошибка: тренировка не найдена")
-            return
-            
         # Проверяем лимит приглашений
         invite_limit = admin_db.get_invite_limit(admin_username)
         trainer_db = TrainerDB(admin_username)
@@ -508,12 +693,13 @@ def register_user_handlers(bot: BotType) -> None:
             participants = trainer_db.get_participants_by_training_id(training_id)
             forum_manager.update_participants_list(training, participants, topic_id, trainer_db)
         
+        bot.delete_message(call.message.chat.id, call.message.message_id)
         # Отвечаем на callback query, чтобы убрать состояние загрузки
         bot.answer_callback_query(call.id)
 
     @bot.callback_query_handler(func=lambda call: call.data == "auto_signup")
     def show_auto_signup_info(call: CallbackQuery):
-        """Показывает информацию об автозаписях и список доступных тренировок"""
+        """Показывает информацию об автозаписях и список доступных групп"""
         username = call.from_user.username
         if not username:
             bot.answer_callback_query(call.id, "Не удалось определить ваш username")
@@ -523,17 +709,28 @@ def register_user_handlers(bot: BotType) -> None:
         user_db = TrainerDB(username)
         balance = user_db.get_auto_signups_balance(username)
         
-        # Получаем текущие автозаписи пользователя
-        user_requests = user_db.get_user_auto_signup_requests(username)
+        # Получаем текущие автозаписи пользователя по всем группам
+        message_text = f"🎫 Ваш баланс автозаписей: {balance}\n\nТекущие автозаписи:\n"
         
-        message_text = (
-            f"🎫 Ваш баланс автозаписей: {balance}\n\n"
-            "Текущие автозаписи:\n"
-        )
+        # Получаем все группы
+        groups = channel_db.get_all_channels()
+        current_auto_signups = []
         
-        if user_requests:
-            for training in user_requests:
+        for group in groups:
+            group_id, group_title = group
+            admins = admin_db.get_channel_admins(group_id)
+            
+            for admin in admins:
+                trainer_db = TrainerDB(admin)
+                trainings = trainer_db.get_trainings_for_channel(group_id)
+                for training in trainings:
+                    if trainer_db.has_auto_signup_request(username, training.id):
+                        current_auto_signups.append((group_title, training))
+        
+        if current_auto_signups:
+            for group_title, training in current_auto_signups:
                 message_text += (
+                    f"👥 Группа: {group_title}\n"
                     f"📅 {training.date_time.strftime('%d.%m.%Y %H:%M')}\n"
                     f"🏋️‍♂️ {training.kind}\n"
                     f"📍 {training.location}\n\n"
@@ -541,44 +738,30 @@ def register_user_handlers(bot: BotType) -> None:
         else:
             message_text += "У вас нет активных автозаписей\n\n"
         
-        # Получаем список закрытых тренировок от всех админов
-        trainings = []
-        all_admins = admin_db.get_all_admins()
-        
-        for admin in all_admins:
-            trainer_db = TrainerDB(admin[0])
-            training_ids = trainer_db.get_training_ids()
+        # Создаем клавиатуру с группами для новой автозаписи
+        markup = InlineKeyboardMarkup()
+        for group_id, title in groups:
+            # Проверяем наличие закрытых тренировок с доступными слотами для автозаписи
+            has_available_trainings = False
+            admins = admin_db.get_channel_admins(group_id)
             
-            for training_id in training_ids:
-                if training := trainer_db.get_training_details(training_id[0]):
+            for admin in admins:
+                trainer_db = TrainerDB(admin)
+                trainings = trainer_db.get_trainings_for_channel(group_id)
+                for training in trainings:
                     if (training.status == "CLOSED" and 
-                        trainer_db.get_available_auto_signup_slots(training_id[0]) > 0 and
-                        not trainer_db.has_auto_signup_request(username, training_id[0])):
-                        trainings.append((admin[0], training))
-        
-        if trainings:
-            message_text += "\nДоступные тренировки для автозаписи:\n\n"
-            markup = InlineKeyboardMarkup(row_width=1)
-            
-            for admin_username, training in trainings:
-                # Добавляем информацию о тренировке в сообщение
-                trainer_db = TrainerDB(admin_username)
-                current_requests = len(trainer_db.get_auto_signup_requests(training.id))
-                message_text += (
-                    f"📅 {training.date_time.strftime('%d.%m.%Y %H:%M')}\n"
-                    f"🏋️‍♂️ Тип: {training.kind}\n"
-                    f"📍 Место: {training.location}\n"
-                    f"✍️ Автозаписей: {current_requests}/{training.max_participants // 2}\n"
-                    "➖➖➖➖➖➖➖➖➖➖\n\n"
-                )
-                
+                        trainer_db.get_available_auto_signup_slots(training.id) > 0 and
+                        not trainer_db.has_auto_signup_request(username, training.id)):
+                        has_available_trainings = True
+                        break
+            if has_available_trainings:
                 markup.add(InlineKeyboardButton(
-                    f"Установить автозапись на {training.date_time.strftime('%d.%m.%Y %H:%M')}",
-                    callback_data=f"request_auto_signup_{admin_username}_{training.id}"
+                    title,
+                    callback_data=f"auto_signup_group_{group_id}"
                 ))
-            
-            markup.add(InlineKeyboardButton("❌ Отмена", callback_data="cancel"))
-            
+        
+        if markup.keyboard:
+            message_text += "Выберите группу для новой автозаписи:"
             bot.edit_message_text(
                 message_text,
                 call.message.chat.id,
@@ -593,6 +776,59 @@ def register_user_handlers(bot: BotType) -> None:
                 call.message.message_id
             )
 
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("auto_signup_group_"))
+    def show_group_trainings_for_auto_signup(call: CallbackQuery):
+        """Показывает список тренировок для автозаписи в выбранной группе"""
+        group_id = int(call.data.split("_")[3])
+        username = call.from_user.username
+        
+        # Получаем информацию о группе
+        group = channel_db.get_channel(group_id)
+        if not group:
+            bot.answer_callback_query(call.id, "Группа не найдена")
+            return
+        
+        # Получаем список тренировок для автозаписи
+        available_trainings = []
+        admins = admin_db.get_channel_admins(group_id)
+        
+        for admin in admins:
+            trainer_db = TrainerDB(admin)
+            trainings = trainer_db.get_trainings_for_channel(group_id)
+            for training in trainings:
+                if (training.status == "CLOSED" and 
+                    trainer_db.get_available_auto_signup_slots(training.id) > 0 and
+                    not trainer_db.has_auto_signup_request(username, training.id)):
+                    available_trainings.append((training, admin))
+        
+        if not available_trainings:
+            bot.send_message(
+                call.message.chat.id,
+                f"В группе {group[1]} нет доступных тренировок для автозаписи"
+            )
+            return
+        
+        # Создаем клавиатуру с тренировками
+        markup = InlineKeyboardMarkup()
+        for training, admin in available_trainings:
+            current_requests = len(trainer_db.get_auto_signup_requests(training.id))
+            button_text = (
+                f"{training.date_time.strftime('%d.%m.%Y %H:%M')} | "
+                f"{training.kind} | "
+                f"Автозаписей: {current_requests}/{training.max_participants // 2}"
+            )
+            markup.add(InlineKeyboardButton(
+                button_text,
+                callback_data=f"request_auto_signup_{admin}_{training.id}"
+            ))
+        
+        bot.edit_message_text(
+            f"Доступные тренировки для автозаписи в группе {group[1]}:",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=markup
+        )
+
     @bot.callback_query_handler(func=lambda call: call.data.startswith("request_auto_signup_"))
     def handle_auto_signup_request(call: CallbackQuery):
         """Обрабатывает запрос на автозапись"""
@@ -603,12 +839,23 @@ def register_user_handlers(bot: BotType) -> None:
         
         # Разбираем callback_data
         parts = call.data.split("_")
-        # Формат: "request_auto_signup_admin_username_training_id"
-        admin_username = parts[-2]  # Предпоследний элемент - username админа
-        training_id = int(parts[-1])  # Последний элемент - id тренировки
+        admin_username = parts[3]  # username админа
+        training_id = int(parts[4])  # id тренировки
         
         # Используем TrainerDB админа для работы с тренировкой
         trainer_db = TrainerDB(admin_username)
+        
+        # Получаем информацию о тренировке
+        training = trainer_db.get_training_details(training_id)
+        if not training:
+            bot.answer_callback_query(call.id, "Тренировка не найдена", show_alert=True)
+            return
+        
+        # Получаем информацию о группе
+        group = channel_db.get_channel(training.channel_id)
+        if not group:
+            bot.answer_callback_query(call.id, "Группа не найдена", show_alert=True)
+            return
         
         # Проверяем баланс пользователя
         user_db = TrainerDB(username)
@@ -623,20 +870,57 @@ def register_user_handlers(bot: BotType) -> None:
         
         # Добавляем запрос
         if trainer_db.add_auto_signup_request(username, training_id):
-            training = trainer_db.get_training_details(training_id)
             bot.answer_callback_query(call.id, "✅ Автозапись успешно добавлена", show_alert=True)
             
             confirmation = (
                 "✅ Вы добавили автозапись на тренировку:\n\n"
+                f"👥 Группа: {group[1]}\n"
                 f"📅 Дата: {training.date_time.strftime('%d.%m.%Y %H:%M')}\n"
                 f"🏋️‍♂️ Тип: {training.kind}\n"
                 f"📍 Место: {training.location}\n\n"
                 "Вы будете автоматически записаны при открытии записи"
             )
-            bot.edit_message_text(
-                confirmation,
-                call.message.chat.id,
-                call.message.message_id
-            )
+            
+            # Обновляем сообщение с информацией об автозаписях
+            show_auto_signup_info(call)
+            
+            # Отправляем отдельное сообщение с подтверждением
+            bot.send_message(call.message.chat.id, confirmation)
         else:
             bot.answer_callback_query(call.id, "Не удалось добавить автозапись", show_alert=True)
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith(("accept_reserve_", "decline_reserve_")))
+    def handle_reserve_response(call: CallbackQuery):
+        """Обрабатывает ответ на предложение места из резерва"""
+        parts = call.data.split("_")
+        action = parts[0]  # "accept" или "decline"
+        training_id = int(parts[2])
+        username = call.from_user.username
+        
+        # Находим админа тренировки
+        admin_username = find_training_admin(training_id)
+        if not admin_username:
+            bot.answer_callback_query(call.id, "Тренировка не найдена")
+            return
+        
+        trainer_db = TrainerDB(admin_username)
+        
+        if action == "accept":
+            if trainer_db.accept_reserve_spot(username, training_id):
+                message = "✅ Вы подтвердили участие в тренировке!"
+            else:
+                message = "❌ Не удалось подтвердить участие"
+        else:
+            trainer_db.remove_from_reserve(username, training_id)
+            message = "Вы отказались от участия в тренировке"
+        
+        # Обновляем список в форуме
+        if topic_id := trainer_db.get_topic_id(training_id):
+            training = trainer_db.get_training_details(training_id)
+            participants = trainer_db.get_participants_by_training_id(training_id)
+            forum_manager.update_participants_list(training, participants, topic_id, trainer_db)
+        
+        # Отправляем сообщение и удаляем исходное сообщение с кнопками
+        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id, message)
+        bot.delete_message(call.message.chat.id, call.message.message_id)

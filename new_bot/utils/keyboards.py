@@ -35,16 +35,8 @@ def get_trainings_keyboard(
             location = training[3]
 
         button_text = f"{date_time} | {training_kind} | {location}"
-        
-        # Изменяем форматы callback_data для разных действий
-        if action == "edit":
-            callback_data = f"edit_{training_id}"
-        elif action == "delete":
-            callback_data = f"delete_{training_id}"
-        elif action == "open_sign_up":
-            callback_data = f"open_sign_up_{training_id}"
-        else:
-            callback_data = f"{action}_{training_id}"
+
+        callback_data = f"{action}_{training_id}"
             
         markup.add(InlineKeyboardButton(button_text, callback_data=callback_data))
     

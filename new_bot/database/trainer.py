@@ -14,6 +14,7 @@ class TrainerDB(BaseDB):
         self.execute_query('''
             CREATE TABLE IF NOT EXISTS schedule (
                 training_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                channel_id INTEGER NOT NULL,
                 date_time TEXT,
                 duration INTEGER,
                 kind TEXT,
@@ -21,7 +22,8 @@ class TrainerDB(BaseDB):
                 status TEXT,
                 max_participants INTEGER DEFAULT 10,
                 price INTEGER DEFAULT 0,
-                topic_id INTEGER DEFAULT NULL
+                topic_id INTEGER DEFAULT NULL,
+                FOREIGN KEY (channel_id) REFERENCES channels(channel_id)
             )
         ''')
         
@@ -100,27 +102,15 @@ class TrainerDB(BaseDB):
             )
         ''')
 
-    def add_training(self, date_time: str, duration: int, kind: str, location: str, max_participants: int, status: str, price: int) -> int:
-        """
-        Добавляет новую тренировку.
-        
-        Args:
-            date_time: дата и время тренировки
-            duration: длительность в минутах
-            kind: тип тренировки
-            location: место проведения
-            max_participants: максимальное количество участников
-            status: статус тренировки (OPEN/CLOSE), по умолчанию CLOSE
-            
-        Returns:
-            int: ID созданной тренировки
-        """
+    def add_training(self, channel_id: int, date_time: str, duration: int, kind: str, 
+                    location: str, max_participants: int, status: str, price: int) -> int:
+        """Добавляет новую тренировку"""
         try:
             self.execute_query('''
                 INSERT INTO schedule 
-                (date_time, duration, kind, location, max_participants, status, price)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (date_time, duration, kind, location, max_participants, status, price))
+                (channel_id, date_time, duration, kind, location, max_participants, status, price)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (channel_id, date_time, duration, kind, location, max_participants, status, price))
             
             return self.cursor.lastrowid
         except Exception as e:
@@ -224,45 +214,49 @@ class TrainerDB(BaseDB):
             participants.append(dict(row)['username'])
         return participants
 
-    def get_trainings_for_user(self, username: str) -> List[Training]:
+    def get_trainings_for_channel(self, channel_id: int) -> List[Training]:
+        """Получает список тренировок для конкретной группы"""
         rows = self.fetch_all('''
-            SELECT s.training_id, s.date_time, s.duration, s.kind, s.location, s.status, s.max_participants, s.price
-            FROM schedule s
-            JOIN participants p ON s.training_id = p.training_id
-            WHERE p.username = ?
-        ''', (username,))
+            SELECT training_id, channel_id, date_time, duration, kind, location, 
+                   status, max_participants, price
+            FROM schedule 
+            WHERE channel_id = ?
+            ORDER BY date_time
+        ''', (channel_id,))
         
         return [
             Training(
                 id=row[0],
-                date_time=datetime.strptime(row[1], '%Y-%m-%d %H:%M'),
-                duration=row[2],
-                kind=row[3],
-                location=row[4],
-                status=row[5],
-                max_participants=row[6],
-                price=row[7]
+                channel_id=row[1],
+                date_time=datetime.strptime(row[2], '%Y-%m-%d %H:%M'),
+                duration=row[3],
+                kind=row[4],
+                location=row[5],
+                status=row[6],
+                max_participants=row[7],
+                price=row[8]
             ) for row in rows
         ]
 
     def get_training_details(self, training_id: int) -> Optional[Training]:
         """Получает детали тренировки по ID"""
         result = self.fetch_one('''
-            SELECT training_id, date_time, duration, 
-            kind, location, max_participants, status, price
+            SELECT training_id, channel_id, date_time, duration, 
+                   kind, location, max_participants, status, price
             FROM schedule WHERE training_id = ?
         ''', (training_id,))
         
         if result:
             return Training(
                 id=result[0],
-                date_time=datetime.strptime(result[1], '%Y-%m-%d %H:%M'),
-                duration=result[2],
-                kind=result[3],
-                location=result[4],
-                max_participants=result[5],
-                status=result[6],
-                price=result[7]
+                channel_id=result[1],
+                date_time=datetime.strptime(result[2], '%Y-%m-%d %H:%M'),
+                duration=result[3],
+                kind=result[4],
+                location=result[5],
+                max_participants=result[6],
+                status=result[7],
+                price=result[8]
             )
         return None
     
@@ -496,20 +490,35 @@ class TrainerDB(BaseDB):
             print(f"[ERROR] Error in accept_reserve_spot: {e}")
             return False
 
-    def set_payment_status(self, username: str, training_id: int, status: int):
-        """Устанавливает статус оплаты"""
-        self.execute_query(
-            "UPDATE participants SET paid = ? WHERE username = ? AND training_id = ?",
-            (status, username, training_id)
-        )
+    def set_payment_status(self, username: str, training_id: int, status: int) -> bool:
+        """Устанавливает статус оплаты
+        status:
+        0 - не оплачено
+        1 - ожидает подтверждения
+        2 - подтверждено
+        """
+        try:
+            self.execute_query(
+                "UPDATE participants SET paid = ? WHERE username = ? AND training_id = ?",
+                (status, username, training_id)
+            )
+            return True
+        except Exception as e:
+            print(f"Error setting payment status: {e}")
+            return False
 
     def get_payment_status(self, username: str, training_id: int) -> int:
-        """Получает статус оплаты"""
+        """Получает статус оплаты тренировки
+        Возвращает:
+        0 - не оплачено
+        1 - ожидает подтверждения
+        2 - подтверждено
+        """
         result = self.fetch_one(
             "SELECT paid FROM participants WHERE username = ? AND training_id = ?",
             (username, training_id)
         )
-        return result[0] if result else 0 
+        return result[0] if result else 0
 
     def is_participant(self, username: str, training_id: int) -> bool:
         """Проверяет, является ли пользователь участником тренировки"""
@@ -771,3 +780,27 @@ class TrainerDB(BaseDB):
             WHERE username = ? AND training_id = ?
         ''', (username, training_id))
         return bool(result) 
+
+    def confirm_payment(self, username: str, training_id: int) -> bool:
+        """Подтверждает оплату тренировки"""
+        try:
+            self.execute_query(
+                "UPDATE participants SET paid = 2 WHERE username = ? AND training_id = ?",
+                (username, training_id)
+            )
+            return True
+        except Exception as e:
+            print(f"Error confirming payment: {e}")
+            return False 
+
+    def mark_payment_pending(self, username: str, training_id: int) -> bool:
+        """Отмечает оплату как ожидающую подтверждения"""
+        try:
+            self.execute_query(
+                "UPDATE participants SET paid = 1 WHERE username = ? AND training_id = ?",
+                (username, training_id)
+            )
+            return True
+        except Exception as e:
+            print(f"Error marking payment as pending: {e}")
+            return False 
