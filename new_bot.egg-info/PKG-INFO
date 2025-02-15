@@ -1,0 +1,5 @@
+Metadata-Version: 2.2
+Name: new_bot
+Version: 0.1
+Requires-Dist: pyTelegramBotAPI>=4.12.0
+Dynamic: requires-dist
