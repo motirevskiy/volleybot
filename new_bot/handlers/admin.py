@@ -785,6 +785,7 @@ def register_admin_handlers(bot: BotType) -> None:
             
             # Отправляем уведомления всем пользователям, кроме тех, кто уже записан через автозапись
             auto_signup_users = trainer_db.get_auto_signup_requests(training_id)
+            bot.delete_message(call.message.chat.id, call.message.message_id)
             print(auto_signup_users)
             for user in users:                
                 user_info = admin_db.get_user_info(user[0])
@@ -798,7 +799,6 @@ def register_admin_handlers(bot: BotType) -> None:
                     trainer_db.remove_auto_signup_request(user_info.username, training.id)
             
             bot.send_message(call.from_user.id, "✅ Запись открыта")
-            bot.delete_message(call.message.chat.id, call.message.message_id)
             
         except Exception as e:
             print(f"Error in open_training: {e}")
@@ -814,7 +814,8 @@ def register_admin_handlers(bot: BotType) -> None:
         # Получаем channel_id администратора
         channel_id = admin_db.get_admin_channel(username)
         if not channel_id:
-            bot.reply_to(message, "❌ У вас нет прав администратора")
+            # Если не админ - показываем пользовательскую статистику
+            show_user_statistics(message)
             return
     
         # Получаем информацию о группе
@@ -825,44 +826,77 @@ def register_admin_handlers(bot: BotType) -> None:
     
         trainer_db = TrainerDB(username)
         
-        # Получаем статистику тренировок для данной группы
+        # Получаем все тренировки для группы
         trainings = trainer_db.get_trainings_for_channel(channel_id)
         
-        total_stats = {
+        # Собираем статистику
+        stats = {
             'total_trainings': len(trainings),
             'total_participants': 0,
             'active_trainings': 0,
-            'participants_by_training': {}
+            'total_in_reserve': 0,
+            'avg_participants': 0,
+            'most_popular_time': None,
+            'most_popular_kind': None,
+            'total_revenue': 0,
+            'time_stats': {},  # Для анализа популярных времен
+            'kind_stats': {}   # Для анализа популярных видов тренировок
         }
         
-        # Подсчитываем статистику по тренировкам
         for training in trainings:
             participants = trainer_db.get_participants_by_training_id(training.id)
-            total_stats['participants_by_training'][training.id] = len(participants)
-            total_stats['total_participants'] += len(participants)
+            reserve = trainer_db.get_reserve_list(training.id)
+            
+            # Основная статистика
+            stats['total_participants'] += len(participants)
+            stats['total_in_reserve'] += len(reserve)
             if training.status == 'OPEN':
-                total_stats['active_trainings'] += 1
+                stats['active_trainings'] += 1
+            
+            # Подсчет выручки (только для подтвержденных оплат)
+            confirmed_payments = sum(1 for p in participants 
+                                   if trainer_db.get_payment_status(p, training.id) == 2)
+            stats['total_revenue'] += confirmed_payments * training.price
+            
+            # Анализ времени
+            hour = training.date_time.strftime('%H:00')
+            stats['time_stats'][hour] = stats['time_stats'].get(hour, 0) + len(participants)
+            
+            # Анализ видов тренировок
+            stats['kind_stats'][training.kind] = stats['kind_stats'].get(training.kind, 0) + len(participants)
         
+        # Вычисляем средние и самые популярные значения
+        if stats['total_trainings'] > 0:
+            stats['avg_participants'] = stats['total_participants'] / stats['total_trainings']
+            if stats['time_stats']:
+                stats['most_popular_time'] = max(stats['time_stats'].items(), key=lambda x: x[1])[0]
+            if stats['kind_stats']:
+                stats['most_popular_kind'] = max(stats['kind_stats'].items(), key=lambda x: x[1])[0]
+        
+        # Формируем сообщение со статистикой
         stats_message = (
             f"📊 Статистика группы {group[1]}:\n\n"
-            f"Всего создано тренировок: {total_stats['total_trainings']}\n"
-            f"Активных тренировок: {total_stats['active_trainings']}\n"
-            f"Всего участников на тренировках: {total_stats['total_participants']}\n\n"
-            "Последние тренировки:\n"
+            f"📅 Всего тренировок: {stats['total_trainings']}\n"
+            f"▫️ Активных: {stats['active_trainings']}\n"
+            f"▫️ Закрытых: {stats['total_trainings'] - stats['active_trainings']}\n\n"
         )
         
-        # Получаем последние 5 тренировок
-        recent_trainings = sorted(trainings, key=lambda t: t.date_time, reverse=True)[:5]
+        if stats['most_popular_time']:
+            stats_message += f"⭐️ Популярное время: {stats['most_popular_time']}\n"
+        if stats['most_popular_kind']:
+            stats_message += f"🏋️‍♂️ Популярный тип: {stats['most_popular_kind']}\n"
         
-        for training in recent_trainings:
-            participants_count = total_stats['participants_by_training'].get(training.id, 0)
-            stats_message += (
-                f"\n📅 {training.date_time.strftime('%d.%m.%Y %H:%M')}\n"
-                f"🏋️‍♂️ {training.kind}\n"
-                f"👥 Участников: {participants_count}/{training.max_participants}\n"
-                f"📝 Статус: {'Открыта' if training.status == 'OPEN' else 'Закрыта'}\n"
-                "➖➖➖➖➖➖➖➖➖➖"
-            )
+        stats_message += f"💰 Общая выручка: {stats['total_revenue']}₽\n\n"
+        stats_message += "📈 Статистика по времени:\n"
+        
+        # Добавляем график популярности времени
+        for hour, count in sorted(stats['time_stats'].items()):
+            bars = "█" * (count // 2) if count > 0 else "▁"
+            stats_message += f"{hour}: {bars} ({count})\n"
+        
+        stats_message += "\n📊 Статистика по видам:\n"
+        for kind, count in sorted(stats['kind_stats'].items(), key=lambda x: x[1], reverse=True):
+            stats_message += f"▫️ {kind}: {count}\n"
         
         bot.send_message(message.chat.id, stats_message)
 
