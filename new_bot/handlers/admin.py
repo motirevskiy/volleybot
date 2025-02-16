@@ -249,61 +249,71 @@ def register_admin_handlers(bot: BotType) -> None:
         # Сохраняем channel_id в данных создания тренировки
         training_creation_data[call.from_user.id] = TrainingData(channel_id=channel_id)
         
-        msg = bot.send_message(call.message.chat.id, "Введите данные тренировки!")
-        edit_or_create_training(msg, "create", None)
-
-    def edit_or_create_training(message: Message, action: str, training_id: Optional[int] = None) -> None:
+        current_date = datetime.now().strftime('%Y-%m-%d %H:%M')
         msg = bot.send_message(
-            message.chat.id,
-            "Введите дату и время тренировки (формат: 'YYYY-MM-DD HH:MM')"
+            call.message.chat.id,
+            "Для создания тренировки отредактируйте следующие данные и отправьте сообщение:\n\n"
         )
-        bot.register_next_step_handler(msg, get_training_details, action, training_id)
+        template = (
+            f"Дата: {current_date}\n"
+            "Количество участников: 12\n"
+            "Длительность(мин): 120\n"
+            "Тип: Игровая\n"
+            "Место: Казань\n"
+            "Стоимость: 500"
+        )
+        msg = bot.send_message(call.message.chat.id, template)
+        bot.register_next_step_handler(msg, process_training_data, "create", None)
 
-    def get_training_details(message: Message, action: str, training_id: Optional[int]) -> None:
+    def process_training_data(message: Message, action: str, training_id: Optional[int] = None) -> None:
+        """Обрабатывает данные тренировки из сообщения"""
+
         user_id = message.from_user.id
         if user_id not in training_creation_data:
             training_creation_data[user_id] = TrainingData()
-        
-        try:
-            validate_datetime(message.text)
-            training_creation_data[user_id].date_time = message.text
-            msg = bot.send_message(message.chat.id, "Введите максимальное количество участников:")
-            bot.register_next_step_handler(msg, get_max_participants, action, training_id)
-        except ValidationError as e:
-            bot.send_message(message.chat.id, f"Ошибка: {str(e)}")
-            edit_or_create_training(message, action, training_id)
 
-    def get_max_participants(message: Message, action: str, training_id: Optional[int]) -> None:
-        user_id = message.from_user.id
         try:
-            max_participants = int(message.text.strip())
-            if max_participants <= 0:
-                raise ValueError("Количество участников должно быть положительным числом")
-            if max_participants > 50:  # Максимальное ограничение
-                raise ValueError("Слишком много участников (максимум 50)")
-                
-            training_creation_data[user_id].max_participants = max_participants
-            msg = bot.send_message(message.chat.id, "Введите длительность тренировки (в минутах):")
-            bot.register_next_step_handler(msg, get_training_duration, action, training_id)
-        except ValueError as e:
-            bot.send_message(message.chat.id, f"Ошибка: {str(e)}")
-            msg = bot.send_message(message.chat.id, "Введите максимальное количество участников:")
-            bot.register_next_step_handler(msg, get_max_participants, action, training_id)
+            # Парсим данные из сообщения
+            lines = message.text.split('\n')
 
-    def get_training_price(message: Message, action: str, training_id: Optional[int]) -> None:
-        """Обрабатывает ввод цены тренировки и передает данные в save_training_data"""
-        user_id = message.from_user.id
-        try:
-            price = int(message.text.strip())
-            training_creation_data[user_id].price = price
+            splited_data = []
             
-            # Проверяем все данные и сохраняем тренировку
+            for line in lines:
+                splited_data.append(line.split(':', 1)[1].strip())
+
+
+            try:
+                try:
+                    validate_datetime(splited_data[0])
+                    training_creation_data[user_id].date_time = splited_data[0]
+                except ValueError:
+                    raise ValidationError("Неверный формат даты. Используйте формат ГГГГ-ММ-ДД ЧЧ:ММ")
+                
+                training_creation_data[user_id].max_participants = int(splited_data[1])
+                training_creation_data[user_id].duration = int(splited_data[2])
+                training_creation_data[user_id].kind = splited_data[3]
+                training_creation_data[user_id].location = splited_data[4]
+                training_creation_data[user_id].price = int(splited_data[5])
+                
+                if not all([training_creation_data[user_id].date_time, training_creation_data[user_id].max_participants, training_creation_data[user_id].duration, training_creation_data[user_id].kind, training_creation_data[user_id].location, training_creation_data[user_id].price]):
+                    raise ValidationError("Все поля должны быть заполнены")
+                
+                if training_creation_data[user_id].max_participants <= 0:
+                    raise ValidationError("Количество участников должно быть положительным числом")
+                if training_creation_data[user_id].duration <= 0:
+                    raise ValidationError("Длительность должна быть положительным числом")
+                if training_creation_data[user_id].price < 0:
+                    raise ValidationError("Стоимость не может быть отрицательной")
+                
+            except (ValueError, ValidationError) as e:
+                bot.reply_to(message, f"❌ Ошибка в данных: {str(e)}")
+                return
+            
             save_training_data(message, action, training_id)
             
-        except ValueError:
-            bot.send_message(message.chat.id, "Ошибка: введите число")
-            msg = bot.send_message(message.chat.id, "Введите стоимость тренировки (в рублях):")
-            bot.register_next_step_handler(msg, get_training_price, action, training_id)
+        except Exception as e:
+            print(f"Error processing training data: {e}")
+            bot.reply_to(message, "❌ Произошла ошибка при обработке данных")
 
     def save_training_data(message: Message, action: str, training_id: Optional[int]) -> None:
         """Сохраняет или обновляет данные тренировки"""
@@ -453,71 +463,6 @@ def register_admin_handlers(bot: BotType) -> None:
             bot.reply_to(message, "❌ Произошла ошибка при обновлении тренировки")
             return False
 
-    # def create_new_training(trainer_db: TrainerDB, training_data: TrainingData, message: Message) -> bool:
-    #     """Создает новую тренировку"""
-    #     try:
-    #         new_training_id = trainer_db.add_training(
-    #             training_data.date_time,
-    #             training_data.duration,
-    #             training_data.kind,
-    #             training_data.location,
-    #             training_data.max_participants,
-    #             "CLOSED",  # Меняем статус на CLOSED при создании
-    #             training_data.price
-    #         )
-            
-    #         if new_training_id:
-    #             # Получаем созданную тренировку
-    #             training = trainer_db.get_training_details(new_training_id)
-    #             if training:
-    #                 # Создаем тему в форуме
-    #                 topic_id = forum_manager.create_training_topic(training, message.from_user.username)
-    #                 if topic_id:
-    #                     trainer_db.set_topic_id(new_training_id, topic_id)
-    #                     # Отправляем объявление в тему
-    #                     forum_manager.send_training_announcement(
-    #                         training, 
-    #                         message.from_user.username,
-    #                         topic_id
-    #                     )
-                        
-    #             bot.reply_to(message, "✅ Тренировка успешно создана!")
-    #             return True
-    #         return False
-    #     except Exception as e:
-    #         print(f"Error in create_new_training: {e}")
-    #         return False
-
-    def notify_about_training_update(trainer_db: TrainerDB, training: Training, 
-                                   training_id: int, message: Message) -> None:
-        """Отправляет уведомления об изменении тренировки"""
-        # Обновляем тему в форуме
-        topic_id = trainer_db.get_topic_id(training_id)
-        if topic_id:
-            forum_manager.send_training_update(training, topic_id, "edit")
-        
-        # Отправляем уведомления участникам
-        participants = trainer_db.get_participants_by_training_id(training_id)
-        notification_message = create_update_notification(training)
-        
-        for username in participants:
-            user_id = admin_db.get_user_id(username)
-            if user_id and user_id != message.from_user.id:
-                try:
-                    bot.send_message(user_id, notification_message)
-                except Exception as e:
-                    print(f"Ошибка отправки уведомления пользователю {username}: {e}")
-
-    def create_update_notification(training: Training) -> str:
-        """Создает текст уведомления об изменении тренировки"""
-        return (
-            "🔄 Тренировка была изменена:\n\n"
-            f"📅 Дата: {training.date_time.strftime('%d.%m.%Y %H:%M')}\n"
-            f"🏋️‍♂️ Тип: {training.kind}\n"
-            f"⏱ Длительность: {training.duration} минут\n"
-            f"📍 Место: {training.location}\n"
-            f"💰 Стоимость: {training.price}₽"
-        )
 
     @bot.callback_query_handler(func=lambda call: call.data == "edit_training")
     def show_trainings_for_edit(call: CallbackQuery):
@@ -572,9 +517,21 @@ def register_admin_handlers(bot: BotType) -> None:
         if not training:
             bot.send_message(call.message.chat.id, "Ошибка: тренировка не найдена")
             return
-            
-        msg = bot.send_message(call.message.chat.id, "Введите новые данные тренировки")
-        edit_or_create_training(msg, "edit", training_id)
+        
+        msg = bot.send_message(call.message.chat.id, "Для редактирования тренировки измените следующие данные и отправьте сообщение:\n\n")
+        
+        # Создаем сообщение с текущими данными
+        template = (
+            f"Дата: {training.date_time.strftime('%Y-%m-%d %H:%M')}\n"
+            f"Количество участников: {training.max_participants}\n"
+            f"Длительность(мин): {training.duration}\n"
+            f"Тип: {training.kind}\n"
+            f"Место: {training.location}\n"
+            f"Стоимость: {training.price}"
+        )
+        
+        msg = bot.send_message(call.message.chat.id, template)
+        bot.register_next_step_handler(msg, process_training_data, "edit", training_id)
 
     @bot.callback_query_handler(func=lambda call: call.data == "delete_training")
     def show_trainings_for_delete(call: CallbackQuery):
@@ -782,12 +739,10 @@ def register_admin_handlers(bot: BotType) -> None:
                 "Записаться",
                 callback_data=f"signup_training_{username}_{training_id}"  # Обновленный формат
             ))
-            
             # Отправляем уведомления всем пользователям, кроме тех, кто уже записан через автозапись
             auto_signup_users = trainer_db.get_auto_signup_requests(training_id)
             bot.delete_message(call.message.chat.id, call.message.message_id)
-            print(auto_signup_users)
-            for user in users:                
+            for user in users:
                 user_info = admin_db.get_user_info(user[0])
                 try:
                     if user_info and user_info.username not in auto_signup_users and not user_info.is_admin:

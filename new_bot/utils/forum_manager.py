@@ -99,63 +99,32 @@ class ForumManager:
     def send_training_update(self, training: Training, topic_id: int, update_type: str) -> None:
         """Отправляет уведомление об изменении тренировки"""
         try:
+            # Обновляем название темы
+            new_topic_name = (
+                f"🏋️‍♂️ {training.kind} | "
+                f"📅 {training.date_time.strftime('%d.%m.%Y %H:%M')} | "
+                f"📍 {training.location}"
+            )
+            
+            try:
+                self.bot.edit_forum_topic(
+                    training.channel_id,
+                    topic_id,
+                    name=new_topic_name
+                )
+            except Exception as e:
+                print(f"Ошибка при обновлении названия темы: {e}")
+            
+            # Формируем сообщение в зависимости от типа обновления
             if update_type == "open":
-                message = "🟢 Открыта запись на тренировку!"
-                # При открытии обновляем название без [ЗАКРЫТО]
-                new_topic_name = (
-                    f"🏋️‍♂️ {training.kind} | "
-                    f"📅 {training.date_time.strftime('%d.%m.%Y %H:%M')} | "
-                    f"📍 {training.location}"
-                )
-                try:
-                    self.bot.edit_forum_topic(
-                        training.channel_id,
-                        topic_id,
-                        name=new_topic_name
-                    )
-                except Exception as e:
-                    # Игнорируем ошибку TOPIC_NOT_MODIFIED
-                    if "TOPIC_NOT_MODIFIED" not in str(e):
-                        print(f"Ошибка при обновлении названия темы: {e}")
-                
+                status_message = "🟢 Открыта запись на тренировку!"
             elif update_type == "close":
-                message = "🔴 Запись на тренировку закрыта"
-                # При закрытии добавляем [ЗАКРЫТО]
-                new_topic_name = (
-                    f"[ЗАКРЫТО] 🏋️‍♂️ {training.kind} | "
-                    f"📅 {training.date_time.strftime('%d.%m.%Y %H:%M')} | "
-                    f"📍 {training.location}"
-                )
-                try:
-                    self.bot.edit_forum_topic(
-                        training.channel_id,  # Используем channel_id из тренировки
-                        topic_id,
-                        name=new_topic_name
-                    )
-                except Exception as e:
-                    print(f"Ошибка при обновлении названия темы: {e}")
-                
-            elif update_type == "edit":
-                # При редактировании используем статус тренировки
-                new_topic_name = (
-                    f"��️‍♂️ {training.kind} | "
-                    f"📅 {training.date_time.strftime('%d.%m.%Y %H:%M')} | "
-                    f"📍 {training.location}"
-                )
-                if training.status != 'OPEN':
-                    new_topic_name = f"[ЗАКРЫТО] {new_topic_name}"
-                
-                try:
-                    self.bot.edit_forum_topic(
-                        training.channel_id,  # Используем channel_id из тренировки
-                        topic_id,
-                        name=new_topic_name
-                    )
-                except Exception as e:
-                    print(f"Ошибка при обновлении названия темы: {e}")
+                status_message = "🔴 Запись на тренировку закрыта"
+            else:  # edit
+                status_message = "📝 Тренировка была изменена:"
             
             message = (
-                f"📝 Тренировка была изменена:\n"
+                f"{status_message}\n\n"
                 f"📅 Дата: {training.date_time.strftime('%d.%m.%Y %H:%M')}\n"
                 f"🏋️‍♂️ Тип: {training.kind}\n"
                 f"⏱ Длительность: {training.duration} минут\n"
@@ -164,7 +133,7 @@ class ForumManager:
             )
         
             self.bot.send_message(
-                training.channel_id,  # Используем channel_id из тренировки
+                training.channel_id,
                 message,
                 message_thread_id=topic_id
             )
