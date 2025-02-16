@@ -30,7 +30,6 @@ training_creation_data: Dict[int, TrainingData] = {}
 
 admin_db = AdminDB()
 channel_db = ChannelDB()
-ADMIN_KEY = ""
 admin_selection = {}
 
 def register_admin_handlers(bot: BotType) -> None:
@@ -49,103 +48,6 @@ def register_admin_handlers(bot: BotType) -> None:
             return
         
         show_admin_menu(message)
-    
-    @bot.callback_query_handler(func=lambda call: call.data == "get_admin")
-    def request_admin_key(call: CallbackQuery):
-        username = call.from_user.username
-        if admin_db.get_admin_channel(username):
-            bot.send_message(call.message.chat.id, "Вы уже являетесь администратором группы!")
-            return
-
-        # Получаем список доступных групп
-        groups = channel_db.get_all_channels()
-        if not groups:
-            bot.send_message(
-                call.message.chat.id,
-                "Нет доступных групп. Сначала добавьте бота в группу и выполните команду /init"
-            )
-            return
-
-        # Создаем клавиатуру с группами
-        markup = InlineKeyboardMarkup()
-        for group_id, title in groups:
-            markup.add(InlineKeyboardButton(
-                title,
-                callback_data=f"select_group_{group_id}"
-            ))
-
-        bot.send_message(
-            call.message.chat.id,
-            "Выберите группу для получения прав администратора:",
-            reply_markup=markup
-        )
-
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("select_group_"))
-    def group_selected(call: CallbackQuery):
-        group_id = int(call.data.split("_")[2])
-        username = call.from_user.username
-
-        # Проверяем, является ли пользователь администратором группы
-        try:
-            chat_member = bot.get_chat_member(group_id, call.from_user.id)
-            if chat_member.status not in ['creator', 'administrator']:
-                bot.answer_callback_query(
-                    call.id,
-                    "❌ Вы должны быть администратором группы",
-                    show_alert=True
-                )
-                return
-        except Exception as e:
-            print(f"Error checking admin rights: {e}")
-            bot.answer_callback_query(
-                call.id,
-                "❌ Ошибка проверки прав администратора",
-                show_alert=True
-            )
-            return
-
-        if not ADMIN_KEY:
-            bot.send_message(call.message.chat.id, "Сейчас нет активных ключей. Запросите у супер-админа.")
-            return
-
-        # Сохраняем выбранную группу во временное хранилище
-        admin_selection[username] = group_id
-
-        msg = bot.send_message(call.message.chat.id, "Введите ключ администратора:")
-        bot.register_next_step_handler(msg, process_admin_key)
-
-    def process_admin_key(message: Message):
-        username = message.from_user.username
-        if username not in admin_selection:  # admin_selection содержит выбранный channel_id
-            bot.reply_to(message, "❌ Сначала выберите группу")
-            return
-
-        channel_id = admin_selection[username]
-        global ADMIN_KEY
-
-        if message.text == str(ADMIN_KEY):
-            # Добавляем админа в таблицу users
-            admin_db.execute_query(
-                "INSERT OR IGNORE INTO users (username, user_id) VALUES (?, ?)",
-                (username, message.from_user.id)
-            )
-            # Добавляем админа для конкретного канала
-            admin_db.add_admin(username, channel_id)  # Теперь передаем channel_id
-            TrainerDB(username)
-            bot.send_message(message.chat.id, "Поздравляю, теперь вы администратор группы!")
-            ADMIN_KEY = ""
-            del admin_selection[username]  # Очищаем временное хранилище
-        else:
-            bot.send_message(message.chat.id, "Неверный ключ!")
-
-    @bot.message_handler(commands=["generate_admin_key"])
-    def generate_admin_key(message: Message):
-        if message.from_user.username != SUPERADMIN_USERNAME:
-            bot.send_message(message.chat.id, "Доступ запрещён.")
-            return
-        global ADMIN_KEY
-        ADMIN_KEY = uuid.uuid4()
-        bot.send_message(message.chat.id, f"Ключ администратора: {ADMIN_KEY}")
 
     @bot.message_handler(commands=["remove_admin"])
     def remove_admin_request(message: Message):
@@ -428,6 +330,33 @@ def register_admin_handlers(bot: BotType) -> None:
                                 bot.send_message(user_id, notification)
                             except Exception as e:
                                 print(f"Error notifying user {username}: {e}")
+            
+            # Если количество мест увеличилось
+            elif new_max_participants > old_max_participants:
+                # Определяем, сколько мест освободилось
+                spots_available = new_max_participants - len(current_participants)
+                if spots_available > 0:
+                    # Получаем первых N человек из резерва
+                    reserve_to_move = current_reserve[:spots_available]
+                    for username, position, status in reserve_to_move:
+                        # Добавляем в основной список
+                        if trainer_db.add_participant(username, training_id):
+                            # Удаляем из резерва
+                            trainer_db.remove_from_reserve(username, training_id)
+                            
+                            # Отправляем уведомление
+                            if user_id := admin_db.get_user_id(username):
+                                notification = (
+                                    "✅ Вы перемещены из резерва в основной список:\n\n"
+                                    f"👥 Группа: {group[1]}\n"
+                                    f"📅 Дата: {current_training.date_time.strftime('%d.%m.%Y %H:%M')}\n"
+                                    f"🏋️‍♂️ Тип: {current_training.kind}\n"
+                                    f"📍 Место: {current_training.location}"
+                                )
+                                try:
+                                    bot.send_message(user_id, notification)
+                                except Exception as e:
+                                    print(f"Error notifying user {username}: {e}")
             
             # Обновляем тему в форуме
             topic_id = trainer_db.get_topic_id(training_id)
@@ -973,42 +902,6 @@ def register_admin_handlers(bot: BotType) -> None:
                 forum_manager.update_participants_list(training, participants, topic_id, trainer_db)
         
         bot.delete_message(call.message.chat.id, call.message.message_id)
-
-    def get_training_duration(message: Message, action: str, training_id: Optional[int]) -> None:
-        user_id = message.from_user.id
-        try:
-            duration = validate_duration(message.text)
-            training_creation_data[user_id].duration = duration
-            msg = bot.send_message(message.chat.id, "Введите тип тренировки:")
-            bot.register_next_step_handler(msg, get_training_type, action, training_id)
-        except ValidationError as e:
-            bot.send_message(message.chat.id, f"Ошибка: {str(e)}")
-            msg = bot.send_message(message.chat.id, "Введите длительность тренировки (в минутах):")
-            bot.register_next_step_handler(msg, get_training_duration, action, training_id)
-
-    def get_training_type(message: Message, action: str, training_id: Optional[int]) -> None:
-        user_id = message.from_user.id
-        try:
-            training_kind = validate_kind(message.text)
-            training_creation_data[user_id].kind = training_kind
-            msg = bot.send_message(message.chat.id, "Введите место тренировки:")
-            bot.register_next_step_handler(msg, get_training_location, action, training_id)
-        except ValidationError as e:
-            bot.send_message(message.chat.id, f"Ошибка: {str(e)}")
-            msg = bot.send_message(message.chat.id, "Введите тип тренировки:")
-            bot.register_next_step_handler(msg, get_training_type, action, training_id)
-
-    def get_training_location(message: Message, action: str, training_id: Optional[int]) -> None:
-        user_id = message.from_user.id
-        try:
-            location = validate_location(message.text)
-            training_creation_data[user_id].location = location
-            msg = bot.send_message(message.chat.id, "Введите стоимость тренировки (в рублях):")
-            bot.register_next_step_handler(msg, get_training_price, action, training_id)
-        except ValidationError as e:
-            bot.send_message(message.chat.id, f"Ошибка: {str(e)}")
-            msg = bot.send_message(message.chat.id, "Введите место тренировки:")
-            bot.register_next_step_handler(msg, get_training_location, action, training_id)
 
     @bot.callback_query_handler(func=lambda call: call.data.startswith("confirm_payment_"))
     def confirm_payment(call: CallbackQuery):
