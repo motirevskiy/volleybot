@@ -164,17 +164,16 @@ def register_user_handlers(bot: BotType) -> None:
                     InlineKeyboardButton("❌ Отказаться", callback_data=f"decline_invite_{training_id}")
                 )
                 
-                invite_message = (
-                    f"🎟 Вас пригласил @{message.from_user.username} на тренировку:\n\n"
+                notification = (
+                    f"🎟 @{admin_username} приглашает вас на тренировку!\n\n"
                     f"👥 Группа: {group[1]}\n"
                     f"📅 Дата: {training.date_time.strftime('%d.%m.%Y %H:%M')}\n"
                     f"🏋️‍♂️ Тип: {training.kind}\n"
-                    f"📍 Место: {training.location}\n"
-                    f"💰 Стоимость: {training.price}₽\n\n"
-                    "⚠️ У вас есть 1 час на принятие приглашения"
+                    f"📍 Место: {training.location}\n\n"
+                    "У вас есть 2 часа, чтобы принять приглашение"
                 )
                 
-                bot.send_message(friend_id, invite_message, reply_markup=markup)
+                bot.send_message(friend_id, notification, reply_markup=markup)
                 success_invites.append(f"@{friend_username}")
             else:
                 failed_invites.append(f"@{friend_username} (ошибка приглашения)")

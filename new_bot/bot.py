@@ -8,33 +8,88 @@ from new_bot.handlers import (
 import threading
 import time
 from datetime import datetime
-from new_bot.utils.scheduler import PaymentScheduler
+from new_bot.utils.scheduler import PaymentScheduler, ReserveScheduler, InvitationScheduler
 
 def check_and_send_reminders(bot):
+    """Проверяет и отправляет напоминания о тренировках"""
     while True:
         try:
-            # Перемещаем импорты внутрь функции
             from new_bot.database.admin import AdminDB
             from new_bot.database.trainer import TrainerDB
+            from new_bot.database.channel import ChannelDB
             
             admin_db = AdminDB()
+            channel_db = ChannelDB()
             admins = admin_db.get_all_admins()
             
-            # Для каждого админа проверяем тренировки и отправляем напоминания
             for admin in admins:
                 try:
-                    trainer_db = TrainerDB(admin[0])
-                    trainer_db.send_training_reminders(bot, hours_before=24)  # За 24 часа
-                    trainer_db.send_training_reminders(bot, hours_before=1)   # За 1 час
+                    admin_username = admin[0]
+                    trainer_db = TrainerDB(admin_username)
+                    trainings = trainer_db.get_all_trainings()
+                    
+                    for training in trainings:
+                        if training.status != "OPEN":
+                            continue
+                            
+                        time_until = training.date_time - datetime.now()
+                        hours_until = time_until.total_seconds() / 3600
+                        
+                        # Получаем участников
+                        participants = trainer_db.fetch_all('''
+                            SELECT username 
+                            FROM participants 
+                            WHERE training_id = ? 
+                            AND status = 'ACTIVE'
+                        ''', (training.id,))
+                        
+                        # Получаем информацию о группе
+                        group = channel_db.get_channel(training.channel_id)
+                        if not group:
+                            continue
+                        
+                        # За 24 часа
+                        if 23.9 <= hours_until <= 24.1:
+                            for participant in participants:
+                                username = participant[0]
+                                if user_id := admin_db.get_user_id(username):
+                                    notification = (
+                                        "⏰ Напоминание о тренировке через 24 часа:\n\n"
+                                        f"👥 Группа: {group[1]}\n"
+                                        f"📅 Дата: {training.date_time.strftime('%d.%m.%Y %H:%M')}\n"
+                                        f"🏋️‍♂️ Тип: {training.kind}\n"
+                                        f"📍 Место: {training.location}"
+                                    )
+                                    try:
+                                        bot.send_message(user_id, notification)
+                                    except Exception as e:
+                                        print(f"Error sending 24h reminder to {username}: {e}")
+                        
+                        # За 1 час
+                        if 0.9 <= hours_until <= 1.1:
+                            for participant in participants:
+                                username = participant[0]
+                                if user_id := admin_db.get_user_id(username):
+                                    notification = (
+                                        "⏰ Напоминание о тренировке через 1 час:\n\n"
+                                        f"👥 Группа: {group[1]}\n"
+                                        f"📅 Дата: {training.date_time.strftime('%d.%m.%Y %H:%M')}\n"
+                                        f"🏋️‍♂️ Тип: {training.kind}\n"
+                                        f"📍 Место: {training.location}"
+                                    )
+                                    try:
+                                        bot.send_message(user_id, notification)
+                                    except Exception as e:
+                                        print(f"Error sending 1h reminder to {username}: {e}")
+                                        
                 except Exception as e:
-                    print(f"Ошибка при отправке напоминаний для админа {admin[0]}: {e}")
+                    print(f"Error processing reminders for admin {admin_username}: {e}")
                     continue
-                
+                    
         except Exception as e:
-            print(f"Ошибка при отправке напоминаний: {e}")
+            print(f"Error in reminder checker: {e}")
             
-        # Проверяем каждые 30 минут
-        time.sleep(1800)
+        time.sleep(660)  # Проверяем каждые 8 минут
 
 def main():
     while True:
@@ -50,6 +105,12 @@ def main():
             # Запускаем планировщики
             payment_scheduler = PaymentScheduler(bot)
             payment_scheduler.start()
+            
+            reserve_scheduler = ReserveScheduler(bot)
+            reserve_scheduler.start()
+
+            invitation_scheduler = InvitationScheduler(bot)
+            invitation_scheduler.start()
             
             # Запускаем поток для проверки напоминаний
             reminder_thread = threading.Thread(target=check_and_send_reminders, args=(bot,))
