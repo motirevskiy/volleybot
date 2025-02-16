@@ -44,7 +44,8 @@ class TrainerDB(BaseDB):
                 username TEXT,
                 training_id INTEGER,
                 status TEXT DEFAULT 'ACTIVE',
-                paid INTEGER DEFAULT 0,  /* 0 - не оплачено, 1 - ожидает подтверждения, 2 - подтверждено */
+                paid INTEGER DEFAULT 0,
+                signup_time TIMESTAMP,
                 FOREIGN KEY (training_id) REFERENCES schedule(training_id)
             )
         ''')
@@ -102,6 +103,52 @@ class TrainerDB(BaseDB):
             )
         ''')
 
+        # Проверяем существующие колонки в participants
+        columns = self.fetch_all("PRAGMA table_info(participants)")
+        column_names = [column[1] for column in columns]
+        
+        if 'signup_time' not in column_names:
+            # Создаем новую таблицу с нужной структурой
+            self.execute_query('''
+                CREATE TABLE IF NOT EXISTS participants_new (
+                    username TEXT,
+                    training_id INTEGER,
+                    status TEXT DEFAULT 'ACTIVE',
+                    paid INTEGER DEFAULT 0,
+                    signup_time TIMESTAMP,
+                    FOREIGN KEY (training_id) REFERENCES schedule(training_id)
+                )
+            ''')
+            
+            # Копируем данные из старой таблицы
+            self.execute_query('''
+                INSERT INTO participants_new (username, training_id, status, paid)
+                SELECT username, training_id, status, paid FROM participants
+            ''')
+            
+            # Обновляем время записи для существующих записей
+            self.execute_query('''
+                UPDATE participants_new 
+                SET signup_time = datetime('now') 
+                WHERE signup_time IS NULL
+            ''')
+            
+            # Удаляем старую таблицу и переименовываем новую
+            self.execute_query('DROP TABLE participants')
+            self.execute_query('ALTER TABLE participants_new RENAME TO participants')
+        else:
+            # Если колонка уже существует, просто создаем таблицу если её нет
+            self.execute_query('''
+                CREATE TABLE IF NOT EXISTS participants (
+                    username TEXT,
+                    training_id INTEGER,
+                    status TEXT DEFAULT 'ACTIVE',
+                    paid INTEGER DEFAULT 0,
+                    signup_time TIMESTAMP,
+                    FOREIGN KEY (training_id) REFERENCES schedule(training_id)
+                )
+            ''')
+
     def add_training(self, channel_id: int, date_time: str, duration: int, kind: str, 
                     location: str, max_participants: int, status: str, price: int) -> int:
         """Добавляет новую тренировку"""
@@ -153,39 +200,24 @@ class TrainerDB(BaseDB):
         return True
 
     def add_participant(self, username: str, training_id: int) -> bool:
-        """Добавляет участника в тренировку"""
+        """Добавляет участника на тренировку"""
         try:
-            
-            # Проверяем существование тренировки
+            # Проверяем количество участников
+            current_count = len(self.get_participants_by_training_id(training_id))
             training = self.get_training_details(training_id)
-            if not training:
+            
+            if current_count >= training.max_participants:
                 return False
             
-            
-            # Проверяем количество текущих участников
-            current_participants = self.get_participants_by_training_id(training_id)
-            
-            if len(current_participants) >= training.max_participants:
-                return False
-            
-            # Проверяем, не записан ли уже пользователь
-            if self.is_participant(username, training_id):
-                return False
-            
-            # Добавляем участника
+            # Добавляем участника с текущим временем
             self.execute_query('''
-                INSERT INTO participants (username, training_id)
-                VALUES (?, ?)
+                INSERT OR IGNORE INTO participants 
+                (username, training_id, signup_time) 
+                VALUES (?, ?, datetime('now'))
             ''', (username, training_id))
-            
-            # Проверяем успешность добавления
-            if self.is_participant(username, training_id):
-                return True
-            else:
-                return False
-            
+            return True
         except Exception as e:
-            import traceback
+            print(f"Error adding participant: {e}")
             return False
 
     def remove_participant(self, username: str, training_id: int) -> bool:
@@ -804,3 +836,50 @@ class TrainerDB(BaseDB):
         except Exception as e:
             print(f"Error marking payment as pending: {e}")
             return False 
+
+    def get_all_trainings(self) -> List[Training]:
+        """Получает все тренировки"""
+        try:
+            rows = self.fetch_all('''
+                SELECT training_id, channel_id, date_time, duration, kind, 
+                       location, status, max_participants, price
+                FROM schedule
+                ORDER BY date_time
+            ''')
+            
+            trainings = []
+            for row in rows:
+                try:
+                    trainings.append(Training(
+                        id=row[0],
+                        channel_id=row[1],
+                        date_time=datetime.strptime(row[2], '%Y-%m-%d %H:%M'),
+                        duration=row[3],
+                        kind=row[4],
+                        location=row[5],
+                        status=row[6],
+                        max_participants=row[7],
+                        price=row[8]
+                    ))
+                except Exception as e:
+                    print(f"Error parsing training data: {e}, row: {row}")
+                    continue
+                
+            return trainings
+        except Exception as e:
+            print(f"Error getting all trainings: {e}")
+            return [] 
+
+    def get_signup_time(self, username: str, training_id: int) -> Optional[datetime]:
+        """Получает время записи участника на тренировку"""
+        try:
+            result = self.fetch_one(
+                "SELECT signup_time FROM participants WHERE username = ? AND training_id = ?",
+                (username, training_id)
+            )
+            if result and result[0]:
+                return datetime.strptime(result[0], '%Y-%m-%d %H:%M:%S')
+            return None
+        except Exception as e:
+            print(f"Error getting signup time: {e}")
+            return None 

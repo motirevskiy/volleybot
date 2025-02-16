@@ -8,6 +8,7 @@ from new_bot.handlers import (
 import threading
 import time
 from datetime import datetime
+from new_bot.utils.scheduler import PaymentScheduler
 
 def check_and_send_reminders(bot):
     while True:
@@ -45,6 +46,10 @@ def main():
             register_common_handlers(bot)
             register_admin_handlers(bot)
             register_user_handlers(bot)
+            
+            # Запускаем планировщики
+            payment_scheduler = PaymentScheduler(bot)
+            payment_scheduler.start()
             
             # Запускаем поток для проверки напоминаний
             reminder_thread = threading.Thread(target=check_and_send_reminders, args=(bot,))

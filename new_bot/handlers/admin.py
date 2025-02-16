@@ -1388,11 +1388,11 @@ def register_admin_handlers(bot: BotType) -> None:
         )
         markup.add(InlineKeyboardButton("💳 Установить реквизиты", callback_data="set_payment_details"))
         markup.add(InlineKeyboardButton("👥 Лимит приглашений", callback_data="set_invite_limit"))
+        markup.add(InlineKeyboardButton("⏱ Время на оплату", callback_data="set_payment_time"))  # Новая кнопка
         
         bot.send_message(
             message.chat.id,
-            f"👥 Группа: {group[1]}\n\n"
-            "Выберите действие:",
+            "Меню администратора:",
             reply_markup=markup
         )
 
@@ -1848,3 +1848,47 @@ def register_admin_handlers(bot: BotType) -> None:
         except Exception as e:
             print(f"Error in reject_payment: {e}")
             bot.answer_callback_query(call.id, "Произошла ошибка при отклонении оплаты")
+
+    @bot.callback_query_handler(func=lambda call: call.data == "set_payment_time")
+    def set_payment_time_handler(call: CallbackQuery):
+        """Обработчик установки времени на оплату"""
+        username = call.from_user.username
+        
+        # Получаем channel_id администратора
+        channel_id = admin_db.get_admin_channel(username)
+        if not channel_id:
+            bot.answer_callback_query(
+                call.id,
+                "❌ Вы не являетесь администратором ни одной группы",
+                show_alert=True
+            )
+            return
+        
+        # Получаем текущее значение
+        current_limit = admin_db.get_payment_time_limit(username)
+        
+        msg = bot.send_message(
+            call.message.chat.id,
+            f"Текущее время на оплату: {current_limit} минут\n\n"
+            "Введите новое значение в минутах (0 - для отключения):"
+        )
+        bot.register_next_step_handler(msg, process_payment_time_limit)
+
+    def process_payment_time_limit(message: Message):
+        """Обрабатывает введенное время на оплату"""
+        try:
+            minutes = int(message.text.strip())
+            if minutes < 0:
+                bot.reply_to(message, "❌ Время не может быть отрицательным")
+                return
+            
+            if admin_db.set_payment_time_limit(message.from_user.username, minutes):
+                status = "отключена" if minutes == 0 else f"установлена на {minutes} минут"
+                bot.reply_to(
+                    message,
+                    f"✅ Функция автоматического перемещения в резерв {status}"
+                )
+            else:
+                bot.reply_to(message, "❌ Ошибка при установке времени")
+        except ValueError:
+            bot.reply_to(message, "❌ Введите корректное число")

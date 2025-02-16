@@ -11,15 +11,22 @@ class AdminDB(BaseDB):
         """Инициализирует базу данных"""
         self.execute_query('''
         CREATE TABLE IF NOT EXISTS admins (
-            username TEXT,
-            user_id INTEGER,
+            username TEXT PRIMARY KEY,
             channel_id INTEGER,
-            payment_details TEXT DEFAULT 'Реквизиты не указаны',
+            payment_details TEXT,
             invite_limit INTEGER DEFAULT 0,
-            PRIMARY KEY (username, channel_id)
+            payment_time_limit INTEGER DEFAULT 0
         )
         ''')
         
+        # Проверяем существующие колонки
+        columns = self.fetch_all("PRAGMA table_info(admins)")
+        column_names = [column[1] for column in columns]
+        
+        # Добавляем колонку payment_time_limit, если её нет
+        if 'payment_time_limit' not in column_names:
+            self.execute_query('ALTER TABLE admins ADD COLUMN payment_time_limit INTEGER DEFAULT 0')
+
         self.execute_query('''
         CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY,
@@ -165,4 +172,24 @@ class AdminDB(BaseDB):
             location=result[4],
             max_participants=result[5],
             status=result[6]
-        ) 
+        )
+
+    def set_payment_time_limit(self, username: str, minutes: int) -> bool:
+        """Устанавливает лимит времени на оплату"""
+        try:
+            self.execute_query(
+                "UPDATE admins SET payment_time_limit = ? WHERE username = ?",
+                (minutes, username)
+            )
+            return True
+        except Exception as e:
+            print(f"Error setting payment time limit: {e}")
+            return False
+
+    def get_payment_time_limit(self, username: str) -> int:
+        """Получает лимит времени на оплаты"""
+        result = self.fetch_one(
+            "SELECT payment_time_limit FROM admins WHERE username = ?",
+            (username,)
+        )
+        return result[0] if result else 0 
