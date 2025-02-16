@@ -439,48 +439,29 @@ class TrainerDB(BaseDB):
             ''', (training_id, position[0]))
 
     def offer_spot_to_next_in_reserve(self, training_id: int) -> Optional[str]:
-        """Предлагает место следующему участнику в резерве"""
-        self.debug_participant_info(None, training_id)  # Перед изменениями
-        
-        next_in_reserve = self.fetch_one('''
-            SELECT username FROM reserve 
-            WHERE training_id = ? AND status = 'WAITING'
-            ORDER BY position ASC
-            LIMIT 1
-        ''', (training_id,))
-        
-        
-        if next_in_reserve:
-            username = next_in_reserve[0]
+        """Предлагает место следующему в резерве"""
+        try:
+            # Получаем следующего в очереди
+            next_in_line = self.fetch_one('''
+                SELECT username FROM reserve 
+                WHERE training_id = ? AND status = 'WAITING'
+                ORDER BY position ASC LIMIT 1
+            ''', (training_id,))
             
-            try:
-                # Добавляем участника в основной список со статусом PENDING
+            if next_in_line:
+                username = next_in_line[0]
+                # Обновляем статус и время предложения
                 self.execute_query('''
-                    INSERT INTO participants (username, training_id, status)
-                    VALUES (?, ?, 'PENDING')
+                    UPDATE reserve 
+                    SET status = 'OFFERED', offer_timestamp = datetime('now')
+                    WHERE username = ? AND training_id = ?
                 ''', (username, training_id))
-                
-                self.debug_participant_info(username, training_id)  # После добавления
-                
-                # Проверяем, что добавление прошло успешно
-                added = self.fetch_one('''
-                    SELECT status FROM participants
-                    WHERE username = ? AND training_id = ? AND status = 'PENDING'
-                ''', (username, training_id))
-                
-                if added:
-                    self.remove_from_reserve(username, training_id)
-                    
-                    self.schedule_pending_cleanup(username, training_id)
-                    
-                    return username
-                else:
-                    print("[ERROR] Failed to add participant with PENDING status")
-                    return None
-            except Exception as e:
-                print(f"[ERROR] Error in offer_spot_to_next_in_reserve: {e}")
-                return None
-        return None
+                return username
+            
+            return None
+        except Exception as e:
+            print(f"Error offering spot to reserve: {e}")
+            return None
 
     def schedule_pending_cleanup(self, username: str, training_id: int) -> None:
         """Планирует очистку через 2 часа"""

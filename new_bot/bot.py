@@ -8,33 +8,12 @@ from new_bot.handlers import (
 import threading
 import time
 from datetime import datetime
-from new_bot.utils.scheduler import PaymentScheduler
-
-def check_and_send_reminders(bot):
-    while True:
-        try:
-            # Перемещаем импорты внутрь функции
-            from new_bot.database.admin import AdminDB
-            from new_bot.database.trainer import TrainerDB
-            
-            admin_db = AdminDB()
-            admins = admin_db.get_all_admins()
-            
-            # Для каждого админа проверяем тренировки и отправляем напоминания
-            for admin in admins:
-                try:
-                    trainer_db = TrainerDB(admin[0])
-                    trainer_db.send_training_reminders(bot, hours_before=24)  # За 24 часа
-                    trainer_db.send_training_reminders(bot, hours_before=1)   # За 1 час
-                except Exception as e:
-                    print(f"Ошибка при отправке напоминаний для админа {admin[0]}: {e}")
-                    continue
-                
-        except Exception as e:
-            print(f"Ошибка при отправке напоминаний: {e}")
-            
-        # Проверяем каждые 30 минут
-        time.sleep(1800)
+from new_bot.utils.scheduler import (
+    PaymentScheduler, 
+    ReserveScheduler, 
+    InvitationScheduler,
+    ReminderScheduler
+)
 
 def main():
     while True:
@@ -49,12 +28,14 @@ def main():
             
             # Запускаем планировщики
             payment_scheduler = PaymentScheduler(bot)
-            payment_scheduler.start()
+            reserve_scheduler = ReserveScheduler(bot)
+            invitation_scheduler = InvitationScheduler(bot)
+            reminder_scheduler = ReminderScheduler(bot)
             
-            # Запускаем поток для проверки напоминаний
-            reminder_thread = threading.Thread(target=check_and_send_reminders, args=(bot,))
-            reminder_thread.daemon = True
-            reminder_thread.start()
+            payment_scheduler.start()
+            reserve_scheduler.start()
+            invitation_scheduler.start()
+            reminder_scheduler.start()
             
             # Запуск бота с настройками переподключения
             print("Бот запущен...")

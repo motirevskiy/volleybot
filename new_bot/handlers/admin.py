@@ -925,21 +925,42 @@ def register_admin_handlers(bot: BotType) -> None:
         
         trainer_db = TrainerDB(admin_username)
         
+        # Проверяем статус в таблице participants
+        participant_status = trainer_db.fetch_one('''
+            SELECT status FROM participants 
+            WHERE username = ? AND training_id = ?
+        ''', (username, training_id))
+        
+        if not participant_status or participant_status[0] != 'RESERVE_PENDING':
+            bot.answer_callback_query(
+                call.id,
+                "❌ Это предложение уже недействительно",
+                show_alert=True
+            )
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+            return
+        
         if action == "accept":
-            if trainer_db.accept_reserve_spot(username, training_id):
-                bot.send_message(call.message.chat.id, "✅ Вы успешно записаны на тренировку!")
-                
-                # Обновляем список в форуме
-                if topic_id := trainer_db.get_topic_id(training_id):
-                    training = trainer_db.get_training_details(training_id)
-                    participants = trainer_db.get_participants_by_training_id(training_id)
-                    forum_manager.update_participants_list(training, participants, topic_id, trainer_db)
-            else:
-                bot.send_message(call.message.chat.id, "❌ Не удалось записаться на тренировку")
+            # Обновляем статус с RESERVE_PENDING на ACTIVE
+            trainer_db.execute_query('''
+                UPDATE participants 
+                SET status = 'ACTIVE' 
+                WHERE username = ? AND training_id = ? AND status = 'RESERVE_PENDING'
+            ''', (username, training_id))
+            bot.send_message(call.message.chat.id, "✅ Вы успешно записаны на тренировку!")
+            
+            # Обновляем список в форуме
+            if topic_id := trainer_db.get_topic_id(training_id):
+                training = trainer_db.get_training_details(training_id)
+                participants = trainer_db.get_participants_by_training_id(training_id)
+                forum_manager.update_participants_list(training, participants, topic_id, trainer_db)
         else:
-            # Удаляем из списка участников и резерва
-            trainer_db.remove_participant(username, training_id)
-            trainer_db.remove_from_reserve(username, training_id)
+            # Удаляем из списка участников
+            trainer_db.execute_query('''
+                DELETE FROM participants 
+                WHERE username = ? AND training_id = ? AND status = 'RESERVE_PENDING'
+            ''', (username, training_id))
+            
             bot.send_message(call.message.chat.id, "Вы отказались от места в тренировке")
             
             # Предлагаем место следующему
@@ -950,6 +971,7 @@ def register_admin_handlers(bot: BotType) -> None:
                 training = trainer_db.get_training_details(training_id)
                 participants = trainer_db.get_participants_by_training_id(training_id)
                 forum_manager.update_participants_list(training, participants, topic_id, trainer_db)
+        
         bot.delete_message(call.message.chat.id, call.message.message_id)
 
     def get_training_duration(message: Message, action: str, training_id: Optional[int]) -> None:
@@ -1830,26 +1852,30 @@ def register_admin_handlers(bot: BotType) -> None:
             )
             return
         
-        # Получаем текущее значение
+        # Получаем текущее значение (конвертируем минуты в часы)
         current_limit = admin_db.get_payment_time_limit(username)
+        current_hours = current_limit / 60 if current_limit else 0
         
         msg = bot.send_message(
             call.message.chat.id,
-            f"Текущее время на оплату: {current_limit} минут\n\n"
-            "Введите новое значение в минутах (0 - для отключения):"
+            f"Текущее время на оплату: {current_hours:.1f} часов\n\n"
+            "Введите новое значение в часах (0 - для отключения):"
         )
         bot.register_next_step_handler(msg, process_payment_time_limit)
 
     def process_payment_time_limit(message: Message):
         """Обрабатывает введенное время на оплату"""
         try:
-            minutes = int(message.text.strip())
-            if minutes < 0:
+            hours = float(message.text.strip())
+            if hours < 0:
                 bot.reply_to(message, "❌ Время не может быть отрицательным")
                 return
             
+            # Конвертируем часы в минуты для хранения в БД
+            minutes = int(hours * 60)
+            
             if admin_db.set_payment_time_limit(message.from_user.username, minutes):
-                status = "отключена" if minutes == 0 else f"установлена на {minutes} минут"
+                status = "отключена" if minutes == 0 else f"установлена на {hours:.1f} часов"
                 bot.reply_to(
                     message,
                     f"✅ Функция автоматического перемещения в резерв {status}"

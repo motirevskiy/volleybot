@@ -53,24 +53,32 @@ class ForumManager:
         
         for i, username in enumerate(participants, 1):
             paid_status = trainer_db.get_payment_status(username, training.id)
-            invite_status = trainer_db.get_invite_status(username, training.id)
+            participant_status = trainer_db.fetch_one('''
+                SELECT status FROM participants 
+                WHERE username = ? AND training_id = ?
+            ''', (username, training.id))[0]
+            
             # Проверяем статус приглашения
             invite = trainer_db.fetch_one('''
                 SELECT status FROM invites 
                 WHERE username = ? AND training_id = ? 
                 AND status = 'PENDING'
-                AND invite_timestamp > datetime('now', '-1 hour')
+                AND invite_timestamp > datetime('now', '-2 hour')
                 ORDER BY invite_timestamp DESC
                 LIMIT 1
             ''', (username, training.id))
             
             # Определяем статус
-            if invite:  # Если есть активное приглашение
-                status = "⏳"  # Ожидается подтверждение приглашения или предложения из резерва
-            elif paid_status == 2:
-                status = "✅"  # Оплачено
+            if participant_status == 'RESERVE_PENDING':
+                status = "⏳"  # Ожидается подтверждение из резерва
+            elif invite:
+                status = "⏳"  # Ожидается подтверждение приглашения
+            elif participant_status == 'ACTIVE' and paid_status == 2:
+                status = "✅"  # Активный и оплачено
+            elif participant_status == 'ACTIVE' and paid_status != 2:
+                status = ""  # Активный, но не оплачено
             else:
-                status = ""   # Нет пометки
+                status = ""   # Другие случаи
             
             message += f"{i}. {status} @{username}\n"
             
@@ -89,7 +97,7 @@ class ForumManager:
         # Отправляем сообщение в канал
         try:
             self.bot.send_message(
-                training.channel_id,  # Используем channel_id из тренировки
+                training.channel_id,
                 message,
                 message_thread_id=topic_id
             )
