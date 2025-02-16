@@ -6,6 +6,7 @@ from new_bot.database.trainer import TrainerDB
 from new_bot.database.admin import AdminDB
 from new_bot.database.channel import ChannelDB
 from telebot import TeleBot
+from new_bot.utils.reserve import offer_spot_to_reserve
 
 class InvitationScheduler:
     def __init__(self, bot: TeleBot):
@@ -166,20 +167,7 @@ class PaymentScheduler:
                                     print(f"Error notifying user {username}: {e}")
                             
                             # Предлагаем место следующему в резерве
-                            if next_username := trainer_db.offer_spot_to_next_in_reserve(training.id):
-                                if user_id := self.admin_db.get_user_id(next_username):
-                                    notification = (
-                                        "🎉 Освободилось место на тренировке!\n\n"
-                                        f"👥 Группа: {group[1]}\n"
-                                        f"📅 Дата: {training.date_time.strftime('%d.%m.%Y %H:%M')}\n"
-                                        f"🏋️‍♂️ Тип: {training.kind}\n"
-                                        f"📍 Место: {training.location}\n\n"
-                                        "У вас есть 2 часа, чтобы подтвердить участие"
-                                    )
-                                    try:
-                                        self.bot.send_message(user_id, notification)
-                                    except Exception as e:
-                                        print(f"Error notifying reserve user {next_username}: {e}")
+                            offer_spot_to_reserve(training.id, admin_username, self.bot)
                             
                             # Уведомляем админа
                             if admin_id := self.admin_db.get_user_id(admin_username):

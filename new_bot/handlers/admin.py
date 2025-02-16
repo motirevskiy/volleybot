@@ -23,6 +23,7 @@ from datetime import datetime, timedelta
 from new_bot.utils.forum_manager import ForumManager
 from new_bot.utils.training import find_training_admin
 from new_bot.handlers.stats import show_user_statistics  # Обновляем импорт
+from new_bot.utils.reserve import offer_spot_to_reserve
 
 # Словарь для хранения данных при создании тренировки
 training_creation_data: Dict[int, TrainingData] = {}
@@ -910,41 +911,6 @@ def register_admin_handlers(bot: BotType) -> None:
         # Удаляем сообщение с кнопкой
         bot.delete_message(call.message.chat.id, call.message.message_id)
 
-    def offer_spot_to_reserve(training_id: int, admin_username: str):
-        """Предлагает место следующему в резерве"""
-        trainer_db = TrainerDB(admin_username)
-        
-        # Получаем следующего в резерве
-        if next_user := trainer_db.offer_spot_to_next_in_reserve(training_id):
-            training = trainer_db.get_training_details(training_id)
-            
-            markup = InlineKeyboardMarkup()
-            markup.add(
-                InlineKeyboardButton("Принять", callback_data=f"accept_reserve_{training_id}"),
-                InlineKeyboardButton("Отказаться", callback_data=f"decline_reserve_{training_id}")
-            )
-            
-            message = (
-                "🎉 Освободилось место на тренировке!\n\n"
-                f"Вы первый в списке резерва и можете занять освободившееся место.\n\n"
-                f"📅 Дата: {training.date_time.strftime('%d.%m.%Y %H:%M')}\n"
-                f"🏋️‍♂️ Тип: {training.kind}\n"
-                f"📍 Место: {training.location}\n\n"
-                "⏰ У вас есть 2 часа, чтобы принять или отказаться от места"
-            )
-            
-            # Получаем user_id пользователя из резерва
-            user = admin_db.fetch_one(
-                "SELECT user_id FROM users WHERE username = ?",
-                (next_user,)
-            )
-            
-            if user:
-                try:
-                    bot.send_message(user[0], message, reply_markup=markup)
-                except Exception as e:
-                    print(f"Ошибка отправки предложения пользователю @{next_user}: {e}")
-
     @bot.callback_query_handler(func=lambda call: call.data.startswith(("accept_reserve_", "decline_reserve_")) and "invite" not in call.data)
     def handle_reserve_response(call: CallbackQuery):
         parts = call.data.split("_")
@@ -977,7 +943,7 @@ def register_admin_handlers(bot: BotType) -> None:
             bot.send_message(call.message.chat.id, "Вы отказались от места в тренировке")
             
             # Предлагаем место следующему
-            offer_spot_to_reserve(training_id, admin_username)
+            offer_spot_to_reserve(training_id, admin_username, bot)
             
             # Обновляем список в форуме
             if topic_id := trainer_db.get_topic_id(training_id):
@@ -1176,7 +1142,7 @@ def register_admin_handlers(bot: BotType) -> None:
             trainer_db.remove_participant(test_participants[-1], training_id)
             
             # Предлагаем место следующему в резерве
-            offer_spot_to_reserve(training_id, message.from_user.username)
+            offer_spot_to_reserve(training_id, message.from_user.username, bot)
             
             # Обновляем список в форуме
             if topic_id := trainer_db.get_topic_id(training_id):

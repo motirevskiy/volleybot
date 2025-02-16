@@ -11,6 +11,7 @@ from new_bot.types import Training, BotType
 from typing import List, Tuple, Optional
 from new_bot.utils.forum_manager import ForumManager
 from datetime import datetime, timedelta
+from new_bot.utils.reserve import offer_spot_to_reserve
 
 # Создаем экземпляры баз данных
 admin_db = AdminDB()
@@ -52,30 +53,7 @@ def cancel_training_handler(call: CallbackQuery, bot: BotType, forum_manager: Fo
             bot.send_message(call.message.chat.id, "✅ Вы успешно отменили запись на тренировку")
             
             # Предлагаем место следующему в резерве
-            if next_username := trainer_db.offer_spot_to_next_in_reserve(training_id):
-                if user_id := admin_db.get_user_id(next_username):
-                    markup = InlineKeyboardMarkup()
-                    markup.row(
-                        InlineKeyboardButton("✅ Принять", callback_data=f"accept_reserve_{training_id}"),
-                        InlineKeyboardButton("❌ Отказаться", callback_data=f"decline_reserve_{training_id}")
-                    )
-                    
-                    training = trainer_db.get_training_details(training_id)
-                    reserve_notification = (
-                        "🎉 Освободилось место на тренировке!\n\n"
-                        f"📅 Дата: {training.date_time.strftime('%d.%m.%Y %H:%M')}\n"
-                        f"🏋️‍♂️ Тип: {training.kind}\n"
-                        f"📍 Место: {training.location}\n\n"
-                        "У вас есть 2 часа, чтобы подтвердить участие."
-                    )
-                    try:
-                        bot.send_message(
-                            user_id, 
-                            reserve_notification,
-                            reply_markup=markup
-                        )
-                    except Exception as e:
-                        print(f"Ошибка отправки уведомления пользователю из резерва {next_username}: {e}")
+            offer_spot_to_reserve(training_id, admin_username, bot)
             
             # Обновляем список в теме
             if topic_id := trainer_db.get_topic_id(training_id):
