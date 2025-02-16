@@ -253,9 +253,6 @@ class ReserveScheduler:
                 AND signup_time < datetime('now', '-2 hours')
             ''')
             
-            print(f"Checking expired offers for admin {admin_username}")
-            print(f"Found {len(expired_offers) if expired_offers else 0} expired offers")
-            
             for offer in expired_offers:
                 username, training_id, signup_time = offer
                 print(f"Processing expired offer: user={username}, training={training_id}, signup_time={signup_time}")

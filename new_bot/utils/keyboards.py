@@ -7,13 +7,15 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
     """Создает основное меню"""
     markup = InlineKeyboardMarkup()
     markup.row(
+        InlineKeyboardButton("📝 Записаться", callback_data="sign_up_training"),
+        InlineKeyboardButton(" Записать друга", callback_data="invite_friend")
+    )
+    markup.row(
         InlineKeyboardButton("📋 Мои тренировки", callback_data="my_trainings"),
         InlineKeyboardButton("📊 Расписание", callback_data="get_schedule"),
     )
     markup.add(InlineKeyboardButton("🎫 Автозапись", callback_data="auto_signup"))
-    markup.add(InlineKeyboardButton("📝 Записаться на тренировку", callback_data="sign_up_training"))
-    markup.add(InlineKeyboardButton("👥 Записать друга", callback_data="invite_friend"))
-    markup.add(InlineKeyboardButton("Получить права администратора", callback_data="get_admin"))
+    markup.add(InlineKeyboardButton("Получить права администратора", callback_data="request_admin"))
     markup.add(InlineKeyboardButton("Отписаться от рассылки", callback_data="cancel_message_sign_up"))
     return markup
 

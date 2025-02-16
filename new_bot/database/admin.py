@@ -6,6 +6,15 @@ from new_bot.types import Training, User
 class AdminDB(BaseDB):
     def __init__(self, db_path: str = 'admin.db'):
         super().__init__(db_path)
+        self.execute_query('''
+        CREATE TABLE IF NOT EXISTS admin_requests (
+            username TEXT,
+            channel_id INTEGER,
+            request_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+            status TEXT DEFAULT 'PENDING',
+            PRIMARY KEY (username, channel_id)
+        )
+        ''')
 
     def _initialize_db(self):
         """Инициализирует базу данных"""

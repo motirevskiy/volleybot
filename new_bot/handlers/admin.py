@@ -1884,3 +1884,135 @@ def register_admin_handlers(bot: BotType) -> None:
                 bot.reply_to(message, "❌ Ошибка при установке времени")
         except ValueError:
             bot.reply_to(message, "❌ Введите корректное число")
+
+    @bot.callback_query_handler(func=lambda call: call.data == "request_admin")
+    def request_admin_handler(call: CallbackQuery):
+        """Обработчик запроса прав администратора"""
+        username = call.from_user.username
+        if not username:
+            bot.reply_to(call.message, "❌ Для запроса прав администратора необходим username")
+            return
+        
+        # Получаем список доступных групп
+        channels = channel_db.get_all_channels()
+        if not channels:
+            bot.reply_to(call.message, "❌ Нет доступных групп")
+            return
+        
+        # Создаем клавиатуру с группами
+        markup = InlineKeyboardMarkup()
+        for channel in channels:
+            markup.add(InlineKeyboardButton(
+                channel[1],  # название группы
+                callback_data=f"request_admin_{channel[0]}"  # channel_id
+            ))
+        
+        bot.reply_to(
+            call.message,
+            "Выберите группу, для которой хотите получить права администратора:",
+            reply_markup=markup
+        )
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("request_admin_"))
+    def process_admin_request(call: CallbackQuery):
+        """Обрабатывает выбор группы для запроса прав"""
+        channel_id = int(call.data.split("_")[2])
+        username = call.from_user.username
+        
+        # Проверяем, не является ли уже админом
+        if admin_db.is_admin(username, channel_id):
+            bot.answer_callback_query(
+                call.id,
+                "❌ Вы уже являетесь администратором этой группы",
+                show_alert=True
+            )
+            return
+        
+        # Проверяем, нет ли уже активного запроса
+        existing_request = admin_db.fetch_one('''
+            SELECT status FROM admin_requests 
+            WHERE username = ? AND channel_id = ? AND status = 'PENDING'
+        ''', (username, channel_id))
+        
+        if existing_request:
+            bot.answer_callback_query(
+                call.id,
+                "❌ У вас уже есть активный запрос для этой группы",
+                show_alert=True
+            )
+            return
+        
+        # Добавляем запрос
+        admin_db.execute_query('''
+            INSERT OR REPLACE INTO admin_requests (username, channel_id, status)
+            VALUES (?, ?, 'PENDING')
+        ''', (username, channel_id))
+        
+        # Уведомляем пользователя
+        bot.answer_callback_query(
+            call.id,
+            "✅ Запрос отправлен на рассмотрение",
+            show_alert=True
+        )
+        
+        # Уведомляем суперадмина
+        superadmin_id = admin_db.get_user_id(SUPERADMIN_USERNAME)
+        if superadmin_id:
+            group = channel_db.get_channel(channel_id)
+            if group:
+                markup = InlineKeyboardMarkup()
+                markup.row(
+                    InlineKeyboardButton("✅ Одобрить", callback_data=f"approve_admin_{username}_{channel_id}"),
+                    InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_admin_{username}_{channel_id}")
+                )
+                
+                notification = (
+                    "📝 Новый запрос на права администратора:\n\n"
+                    f"👤 Пользователь: @{username}\n"
+                    f"👥 Группа: {group[1]}"
+                )
+                
+                bot.send_message(superadmin_id, notification, reply_markup=markup)
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith(("approve_admin_", "reject_admin_")))
+    def process_admin_decision(call: CallbackQuery):
+        """Обрабатывает решение суперадмина по запросу"""
+        if call.from_user.username != SUPERADMIN_USERNAME:
+            bot.answer_callback_query(call.id, "❌ Недостаточно прав", show_alert=True)
+            return
+        
+        action = call.data.split("_")[0]
+        username = call.data.split("_")[2]
+        channel_id = int(call.data.split("_")[3])
+        
+        # Получаем информацию о группе
+        group = channel_db.get_channel(channel_id)
+        if not group:
+            bot.answer_callback_query(call.id, "❌ Группа не найдена", show_alert=True)
+            return
+        
+        if action == "approve":
+            # Добавляем нового админа
+            admin_db.add_admin(username, channel_id)
+            status = "APPROVED"
+            admin_message = "✅ Запрос одобрен"
+            user_message = f"✅ Ваш запрос на права администратора для группы {group[1]} одобрен"
+        else:
+            status = "REJECTED"
+            admin_message = "❌ Запрос отклонен"
+            user_message = f"❌ Ваш запрос на права администратора для группы {group[1]} отклонен"
+        
+        # Обновляем статус запроса
+        admin_db.execute_query('''
+            UPDATE admin_requests 
+            SET status = ? 
+            WHERE username = ? AND channel_id = ?
+        ''', (status, username, channel_id))
+        
+        # Уведомляем суперадмина
+        bot.answer_callback_query(call.id, admin_message)
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        
+        # Уведомляем пользователя
+        if user_id := admin_db.get_user_id(username):
+            bot.send_message(user_id, user_message)
