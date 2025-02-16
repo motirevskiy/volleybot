@@ -22,6 +22,7 @@ from new_bot.utils.validators import (
 from datetime import datetime, timedelta
 from new_bot.utils.forum_manager import ForumManager
 from new_bot.utils.training import find_training_admin
+from new_bot.handlers.stats import show_user_statistics  # Обновляем импорт
 
 # Словарь для хранения данных при создании тренировки
 training_creation_data: Dict[int, TrainingData] = {}
@@ -770,7 +771,7 @@ def register_admin_handlers(bot: BotType) -> None:
         channel_id = admin_db.get_admin_channel(username)
         if not channel_id:
             # Если не админ - показываем пользовательскую статистику
-            show_user_statistics(message)
+            show_user_statistics(message, bot)  # Передаем bot как аргумент
             return
     
         # Получаем информацию о группе
@@ -1374,17 +1375,17 @@ def register_admin_handlers(bot: BotType) -> None:
         markup = InlineKeyboardMarkup()
         markup.row(
             InlineKeyboardButton("➕ Создать", callback_data="create_training"),
-            InlineKeyboardButton("✏️ Изменить", callback_data="edit_training")
+            InlineKeyboardButton("✏️ Изменить", callback_data="edit_training"),
+            InlineKeyboardButton("❌ Удалить", callback_data="delete_training"),
         )
         markup.row(
             InlineKeyboardButton("🔓 Открыть запись", callback_data="open_training_sign_up"),
             InlineKeyboardButton("🔒 Закрыть запись", callback_data="close_training")
         )
         markup.row(
-            InlineKeyboardButton("❌ Удалить", callback_data="delete_training"),
-            InlineKeyboardButton("📊 Расписание", callback_data="get_schedule")
+            InlineKeyboardButton("📊 Расписание", callback_data="get_schedule"),
+            InlineKeyboardButton("👤 Удалить участника", callback_data="remove_participant")
         )
-        markup.add(InlineKeyboardButton("👤 Удалить участника", callback_data="remove_participant"))
         markup.add(InlineKeyboardButton("💳 Установить реквизиты", callback_data="set_payment_details"))
         markup.add(InlineKeyboardButton("👥 Лимит приглашений", callback_data="set_invite_limit"))
         
