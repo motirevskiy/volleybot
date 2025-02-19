@@ -345,37 +345,6 @@ class TrainerDB(BaseDB):
         stats['recent_activities'] = recent
         return stats 
 
-    def send_training_reminders(self, bot: 'BotType', hours_before: int = 24) -> None:
-        """
-        Отправляет напоминания о предстоящих тренировках.
-        
-        Args:
-            bot: Экземпляр бота для отправки сообщений
-            hours_before: За сколько часов до тренировки отправлять напоминание
-        """
-        # Получаем тренировки, которые начнутся через hours_before часов
-        target_time = datetime.now() + timedelta(hours=hours_before)
-        target_time_str = target_time.strftime('%Y-%m-%d %H:%M')
-        
-        upcoming_trainings = self.fetch_all('''
-            SELECT training_id, date_time, duration, kind, location, status, max_participants
-            FROM schedule
-            WHERE date_time = ?
-            AND status = 'OPEN'
-        ''', (target_time_str,))
-
-        # Перемещаем импорт внутрь функции
-        from new_bot.utils.notifications import NotificationManager
-        notification_manager = NotificationManager(bot)
-        
-        for training_data in upcoming_trainings:
-            training = Training.from_db_row(training_data[1:])
-            training.id = training_data[0]
-            participants = self.get_participants_by_training_id(training.id)
-            
-            if participants:
-                notification_manager.send_reminder(training, participants, hours_before) 
-
     def update_topic_id(self, training_id: int, topic_id: int) -> None:
         """Обновляет ID темы для тренировки"""
         self.execute_query(
@@ -416,6 +385,14 @@ class TrainerDB(BaseDB):
             WHERE training_id = ? 
             ORDER BY position
         ''', (training_id,))
+    
+    def is_in_reserve(self, username: str, training_id: int) -> bool:
+        """Проверяет, записан ли пользователь в резерв"""
+        return self.fetch_one('''
+            SELECT 1 FROM reserve 
+            WHERE username = ? AND training_id = ?
+        ''', (username, training_id,))
+        
 
     def remove_from_reserve(self, username: str, training_id: int) -> None:
         """Удаляет участника из резерва"""

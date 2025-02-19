@@ -1,16 +1,10 @@
-import threading
-import schedule
-import time
 from telebot.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, Message
 from new_bot.database.admin import AdminDB
 from new_bot.database.trainer import TrainerDB
 from new_bot.database.channel import ChannelDB
-from new_bot.utils.messages import create_schedule_message
-from new_bot.utils.keyboards import get_trainings_keyboard
 from new_bot.types import Training, BotType
-from typing import List, Tuple, Optional
+from typing import Optional
 from new_bot.utils.forum_manager import ForumManager
-from datetime import datetime, timedelta
 from new_bot.utils.reserve import offer_spot_to_reserve
 
 # Создаем экземпляры баз данных
@@ -42,14 +36,14 @@ def cancel_training_handler(call: CallbackQuery, bot: BotType, forum_manager: Fo
             return
         
         trainer_db = TrainerDB(admin_username)
-        
-        # Проверяем, записан ли пользователь
-        if not trainer_db.is_participant(username, training_id):
+
+        if not trainer_db.is_in_reserve(username, training_id) and not trainer_db.is_participant(username, training_id):
             bot.answer_callback_query(call.id, "Вы не записаны на эту тренировку.")
             return
 
         # Удаляем участника
-        if trainer_db.remove_participant(username, training_id):
+        if (trainer_db.is_in_reserve(username, training_id) and trainer_db.remove_from_reserve(username, training_id)) or \
+            (not trainer_db.is_in_reserve(username, training_id) and trainer_db.remove_participant(username, training_id)):
             bot.send_message(call.message.chat.id, "✅ Вы успешно отменили запись на тренировку")
             
             # Предлагаем место следующему в резерве
@@ -70,55 +64,6 @@ def cancel_training_handler(call: CallbackQuery, bot: BotType, forum_manager: Fo
 
 def register_user_handlers(bot: BotType) -> None:
     forum_manager = ForumManager(bot)
-
-    def check_pending_invites():
-        """Проверяет и удаляет просроченные приглашения"""
-        for admin in admin_db.get_all_admins():
-            trainer_db = TrainerDB(admin[0])
-            # Получаем все приглашения, которые истекли
-            expired_invites = trainer_db.fetch_all('''
-                SELECT username, training_id, invite_timestamp 
-                FROM invites 
-                WHERE status = 'PENDING' 
-                AND invite_timestamp < datetime('now', '-1 hour')
-                AND NOT EXISTS (
-                    SELECT 1 FROM invites i2 
-                    WHERE i2.username = invites.username 
-                    AND i2.training_id = invites.training_id 
-                    AND i2.status IN ('ACCEPTED', 'DECLINED')
-                )
-            ''')
-            
-            for invite in expired_invites:
-                username, training_id = invite[0], invite[1]
-                # Удаляем из списка/резерва и инвайт
-                trainer_db.remove_participant(username, training_id)
-                trainer_db.remove_from_reserve(username, training_id)
-                trainer_db.remove_invite(username, training_id)
-                
-                # Уведомляем пользователя
-                if friend_id := admin_db.get_user_id(username):
-                    bot.send_message(
-                        friend_id,
-                        "❌ Время на принятие приглашения истекло. Вы удалены из списка."
-                    )
-                    
-                # Обновляем список в форуме
-                if topic_id := trainer_db.get_topic_id(training_id):
-                    training = trainer_db.get_training_details(training_id)
-                    participants = trainer_db.get_participants_by_training_id(training_id)
-                    forum_manager.update_participants_list(training, participants, topic_id, trainer_db)
-
-    # Запускаем проверку каждые 30 секунд
-    schedule.every(30).seconds.do(check_pending_invites)
-
-    # Запускаем планировщик в отдельном потоке
-    def run_scheduler():
-        while True:
-            schedule.run_pending()
-            time.sleep(1)
-
-    threading.Thread(target=run_scheduler, daemon=True).start()
 
     def process_friend_invite(message: Message, training_id: int, admin_username: str):
         """Обрабатывает приглашение друга"""
@@ -353,8 +298,52 @@ def register_user_handlers(bot: BotType) -> None:
         parts = call.data.split("_")
         admin_username = parts[2]
         training_id = int(parts[3])
+        username = call.from_user.username
         
-        # Остальной код обработки записи...
+        # Убедимся, что пользователь добавлен в таблицу users
+        admin_db.execute_query(
+            "INSERT OR IGNORE INTO users (username, user_id) VALUES (?, ?)",
+            (username, call.from_user.id)
+        )
+        
+        trainer_db = TrainerDB(admin_username)
+
+        if trainer_db.get_training_details(training_id).status == "CLOSED":
+            bot.send_message(call.message.chat.id, "❌ Эта тренировка не доступна для записи")
+            return
+
+        if trainer_db.add_participant(username, training_id):
+            bot.send_message(call.message.chat.id, "✅ Вы успешно записались на тренировку!")
+            
+            # Обновляем список участников в теме
+            if topic_id := trainer_db.get_topic_id(training_id):
+                training = trainer_db.get_training_details(training_id)
+                participants = trainer_db.get_participants_by_training_id(training_id)
+                forum_manager.update_participants_list(training, participants, topic_id, trainer_db)
+        else:
+            # Проверяем, записан ли уже пользователь
+            existing = trainer_db.fetch_one('''
+                SELECT 1 FROM participants 
+                WHERE username = ? AND training_id = ?
+            ''', (username, training_id))
+            
+            if existing:
+                message = "❌ Вы уже записаны на эту тренировку!"
+            else:
+                # Добавляем в резерв
+                position = trainer_db.add_to_reserve(username, training_id)
+                message = f"ℹ️ Вы добавлены в резерв на позицию {position}"
+                
+                # Обновляем список в теме
+                if topic_id := trainer_db.get_topic_id(training_id):
+                    training = trainer_db.get_training_details(training_id)
+                    participants = trainer_db.get_participants_by_training_id(training_id)
+                    forum_manager.update_participants_list(training, participants, topic_id, trainer_db)
+                
+            bot.send_message(call.message.chat.id, message)
+        
+        # Удаляем сообщение с кнопкой
+        bot.delete_message(call.message.chat.id, call.message.message_id)
 
     @bot.callback_query_handler(func=lambda call: call.data == "cancel_message_sign_up")
     def cancel_message_sign_up(call: CallbackQuery) -> None:
@@ -470,42 +459,10 @@ def register_user_handlers(bot: BotType) -> None:
                 markup = InlineKeyboardMarkup()
                 markup.add(InlineKeyboardButton(
                     "Отменить резерв", 
-                    callback_data=f"cancel_reserve_{admin_username}_{training.id}"
+                    callback_data=f"cancel_{admin_username}_{training.id}"
                 ))
                 
                 bot.send_message(call.message.chat.id, message, reply_markup=markup)
-
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("swap_"))
-    def show_swap_options(call: CallbackQuery):
-        training_id = int(call.data.split("_")[1])
-        username = call.from_user.username
-        
-        # Находим админа тренировки
-        admin_username = find_training_admin(training_id)
-        
-        if not admin_username:
-            bot.send_message(call.message.chat.id, "Ошибка: тренировка не найдена")
-            return
-            
-        trainer_db = TrainerDB(admin_username)
-        reserve_list = trainer_db.get_reserve_list(training_id)
-        
-        if not reserve_list:
-            bot.send_message(call.message.chat.id, "В резерве нет участников для обмена")
-            return
-            
-        markup = InlineKeyboardMarkup()
-        for reserve_username, position, status in reserve_list:
-            if status == 'WAITING':
-                button_text = f"@{reserve_username} (позиция {position})"
-                callback_data = f"confirm_swap_{training_id}|{reserve_username}"
-                markup.add(InlineKeyboardButton(button_text, callback_data=callback_data))
-        
-        bot.send_message(
-            call.message.chat.id, 
-            "Выберите участника из резерва для обмена местами:",
-            reply_markup=markup
-        )
 
     @bot.callback_query_handler(func=lambda call: call.data == "invite_friend")
     def show_groups_for_invite(call: CallbackQuery):

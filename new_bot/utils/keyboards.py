@@ -19,6 +19,27 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
     markup.add(InlineKeyboardButton("Отписаться от рассылки", callback_data="cancel_message_sign_up"))
     return markup
 
+def get_admin_menu_keyboard() -> InlineKeyboardMarkup:
+    markup = InlineKeyboardMarkup()
+    markup.row(
+        InlineKeyboardButton("➕ Создать", callback_data="create_training"),
+        InlineKeyboardButton("✏️ Изменить", callback_data="edit_training"),
+        InlineKeyboardButton("❌ Удалить", callback_data="delete_training"),
+    )
+    markup.row(
+        InlineKeyboardButton("🔓 Открыть запись", callback_data="open_training_sign_up"),
+        InlineKeyboardButton("🔒 Закрыть запись", callback_data="close_training")
+    )
+    markup.row(
+        InlineKeyboardButton("📊 Расписание", callback_data="get_schedule"),
+        InlineKeyboardButton("👤 Удалить участника", callback_data="remove_participant")
+    )
+    markup.add(InlineKeyboardButton("💳 Установить реквизиты", callback_data="set_payment_details"))
+    markup.add(InlineKeyboardButton("👥 Лимит приглашений", callback_data="set_invite_limit"))
+    markup.add(InlineKeyboardButton("⏱ Время на оплату", callback_data="set_payment_time"))
+
+    return markup
+
 def get_trainings_keyboard(
     trainings: Union[List[Tuple[int, str, str, str]], List[Training]], 
     action: str
@@ -44,39 +65,8 @@ def get_trainings_keyboard(
     
     return markup
 
-def get_admin_list_keyboard(admins: List[Tuple[str]]) -> InlineKeyboardMarkup:
-    markup = InlineKeyboardMarkup()
-    for admin in admins:
-        markup.add(InlineKeyboardButton(f"Удалить {admin[0]}", callback_data=f"remadm_{admin[0]}"))
-    return markup
-
 def get_confirm_keyboard() -> InlineKeyboardMarkup:
     markup = InlineKeyboardMarkup()
     markup.add(InlineKeyboardButton("Подтвердить", callback_data="confirm_clear"))
     markup.add(InlineKeyboardButton("Отмена", callback_data="cancel"))
     return markup
-
-def get_training_keyboard(training_id: int) -> InlineKeyboardMarkup:
-    """Создает клавиатуру для тренировки с кнопками записи/отмены"""
-    markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton("Записаться", callback_data=f"signup_{training_id}"))
-    markup.add(InlineKeyboardButton("Отменить запись", callback_data=f"cancel_{training_id}"))
-    return markup
-
-def get_user_trainings_keyboard(trainings: List[Training], admin_username: str) -> InlineKeyboardMarkup:
-    markup = InlineKeyboardMarkup()
-    
-    # Добавляем кнопку для просмотра реквизитов
-    markup.add(InlineKeyboardButton(
-        "💳 Реквизиты для оплаты",
-        callback_data="show_payment_details"
-    ))
-    
-    for training in trainings:
-        training_text = (
-            f"{training.date_time.strftime('%Y-%m-%d %H:%M')} | "
-            f"{training.kind} | {training.location}"
-        )
-        markup.add(InlineKeyboardButton(training_text, callback_data=f"training_{training.id}"))
-    
-    return markup 

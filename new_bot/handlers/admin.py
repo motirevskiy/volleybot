@@ -1,27 +1,22 @@
-import uuid
 import os
-from typing import List, Optional, Dict
+from typing import Optional, Dict
 from telebot.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from new_bot.config import SUPERADMIN_USERNAME
 from new_bot.database.admin import AdminDB
 from new_bot.database.trainer import TrainerDB
 from new_bot.database.channel import ChannelDB
 from new_bot.utils.keyboards import (
+    get_admin_menu_keyboard,
     get_trainings_keyboard,
-    get_admin_list_keyboard,
     get_confirm_keyboard
 )
-from new_bot.types import Training, TrainingData, HandlerType, BotType
+from new_bot.types import Training, TrainingData, BotType
 from new_bot.utils.validators import (
     validate_datetime,
-    validate_duration,
-    validate_kind,
-    validate_location,
     ValidationError
 )
 from datetime import datetime, timedelta
 from new_bot.utils.forum_manager import ForumManager
-from new_bot.utils.training import find_training_admin
 from new_bot.handlers.stats import show_user_statistics  # Обновляем импорт
 from new_bot.utils.reserve import offer_spot_to_reserve
 
@@ -31,6 +26,14 @@ training_creation_data: Dict[int, TrainingData] = {}
 admin_db = AdminDB()
 channel_db = ChannelDB()
 admin_selection = {}
+
+def find_training_admin(training_id: int) -> Optional[str]:
+    """Находит админа, создавшего тренировку"""
+    for admin in admin_db.get_all_admins():
+        trainer_db = TrainerDB(admin[0])
+        if trainer_db.get_training_details(training_id):
+            return admin[0]
+    return None
 
 def register_admin_handlers(bot: BotType) -> None:
     # Создаем экземпляр ForumManager
@@ -125,7 +128,7 @@ def register_admin_handlers(bot: BotType) -> None:
         
         # Удаляем все файлы баз данных тренировок
         for file in os.listdir(data_dir):
-            if file.endswith("_trainings.db"):
+            if file.endswith(".db"):
                 os.remove(os.path.join(data_dir, file))
                 
         bot.send_message(call.message.chat.id, "База данных администраторов и все базы данных тренировок удалены.")
@@ -786,60 +789,6 @@ def register_admin_handlers(bot: BotType) -> None:
         
         bot.send_message(message.chat.id, stats_message)
 
-    # Обновляем обработчик записи на тренировку
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("signup_training_"))
-    def process_training_signup(call: CallbackQuery):
-        """Обрабатывает запись на тренировку"""
-        parts = call.data.split("_")
-        admin_username = parts[2]
-        training_id = int(parts[3])
-        username = call.from_user.username
-        
-        # Убедимся, что пользователь добавлен в таблицу users
-        admin_db.execute_query(
-            "INSERT OR IGNORE INTO users (username, user_id) VALUES (?, ?)",
-            (username, call.from_user.id)
-        )
-        
-        trainer_db = TrainerDB(admin_username)
-
-        if trainer_db.get_training_details(training_id).status == "CLOSED":
-            bot.send_message(call.message.chat.id, "❌ Эта тренировка не доступна для записи")
-            return
-
-        if trainer_db.add_participant(username, training_id):
-            bot.send_message(call.message.chat.id, "✅ Вы успешно записались на тренировку!")
-            
-            # Обновляем список участников в теме
-            if topic_id := trainer_db.get_topic_id(training_id):
-                training = trainer_db.get_training_details(training_id)
-                participants = trainer_db.get_participants_by_training_id(training_id)
-                forum_manager.update_participants_list(training, participants, topic_id, trainer_db)
-        else:
-            # Проверяем, записан ли уже пользователь
-            existing = trainer_db.fetch_one('''
-                SELECT 1 FROM participants 
-                WHERE username = ? AND training_id = ?
-            ''', (username, training_id))
-            
-            if existing:
-                message = "❌ Вы уже записаны на эту тренировку!"
-            else:
-                # Добавляем в резерв
-                position = trainer_db.add_to_reserve(username, training_id)
-                message = f"ℹ️ Вы добавлены в резерв на позицию {position}"
-                
-                # Обновляем список в теме
-                if topic_id := trainer_db.get_topic_id(training_id):
-                    training = trainer_db.get_training_details(training_id)
-                    participants = trainer_db.get_participants_by_training_id(training_id)
-                    forum_manager.update_participants_list(training, participants, topic_id, trainer_db)
-                
-            bot.send_message(call.message.chat.id, message)
-        
-        # Удаляем сообщение с кнопкой
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-
     @bot.callback_query_handler(func=lambda call: call.data.startswith(("accept_reserve_", "decline_reserve_")) and "invite" not in call.data)
     def handle_reserve_response(call: CallbackQuery):
         parts = call.data.split("_")
@@ -1157,6 +1106,8 @@ def register_admin_handlers(bot: BotType) -> None:
         
         # Устанавливаем статус "ожидает подтверждения"
         trainer_db.set_payment_status(username, training_id, 1)
+
+        info = trainer_db.get_training_details(training_id)
         
         # Создаем клавиатуру для админа
         markup = InlineKeyboardMarkup()
@@ -1173,7 +1124,7 @@ def register_admin_handlers(bot: BotType) -> None:
             bot.send_photo(
                 admin_user_id,
                 message.photo[-1].file_id,
-                caption=f"Скриншот оплаты от @{username} за тренировку #{training_id}",
+                caption=f"Скриншот оплаты от @{username} за тренировку {info.date_time.strftime('%d.%m.%Y %H:%M')}",
                 reply_markup=markup
             )
             
@@ -1253,48 +1204,13 @@ def register_admin_handlers(bot: BotType) -> None:
             bot.reply_to(message, "❌ Группа не найдена")
             return
         
-        markup = InlineKeyboardMarkup()
-        markup.row(
-            InlineKeyboardButton("➕ Создать", callback_data="create_training"),
-            InlineKeyboardButton("✏️ Изменить", callback_data="edit_training"),
-            InlineKeyboardButton("❌ Удалить", callback_data="delete_training"),
-        )
-        markup.row(
-            InlineKeyboardButton("🔓 Открыть запись", callback_data="open_training_sign_up"),
-            InlineKeyboardButton("🔒 Закрыть запись", callback_data="close_training")
-        )
-        markup.row(
-            InlineKeyboardButton("📊 Расписание", callback_data="get_schedule"),
-            InlineKeyboardButton("👤 Удалить участника", callback_data="remove_participant")
-        )
-        markup.add(InlineKeyboardButton("💳 Установить реквизиты", callback_data="set_payment_details"))
-        markup.add(InlineKeyboardButton("👥 Лимит приглашений", callback_data="set_invite_limit"))
-        markup.add(InlineKeyboardButton("⏱ Время на оплату", callback_data="set_payment_time"))  # Новая кнопка
+        markup = get_admin_menu_keyboard()
         
         bot.send_message(
             message.chat.id,
             "Меню администратора:",
             reply_markup=markup
         )
-
-    @bot.callback_query_handler(func=lambda call: call.data == "admin_list")
-    def show_admin_list(call: CallbackQuery):
-        """Показывает список администраторов"""
-        username = call.from_user.username
-        channel_id = admin_db.get_admin_channel(username)
-        if not channel_id:
-            return
-        
-        admins = admin_db.get_all_admins()
-        if not admins:
-            bot.send_message(call.message.chat.id, "Список администраторов пуст")
-            return
-            
-        message = "👮‍♂️ Список администраторов:\n\n"
-        for admin in admins:
-            message += f"@{admin[0]}\n"
-            
-        bot.send_message(call.message.chat.id, message)
 
     @bot.callback_query_handler(func=lambda call: call.data == "remove_participant")
     def show_trainings_for_participant_removal(call: CallbackQuery):
@@ -1645,37 +1561,6 @@ def register_admin_handlers(bot: BotType) -> None:
                     except Exception as e:
                         print(f"Error notifying user {username}: {e}")
 
-    @bot.message_handler(commands=["set_payment_details"])
-    def set_payment_details(message: Message):
-        """Устанавливает реквизиты для оплаты"""
-        username = message.from_user.username
-        if not admin_db.is_admin(username):
-            bot.reply_to(message, "❌ У вас нет прав администратора")
-            return
-            
-        # Получаем channel_id администратора
-        channel_id = admin_db.get_admin_channel(username)
-        if not channel_id:
-            bot.reply_to(message, "❌ Вы не являетесь администратором ни одной группы")
-            return
-        
-        # Получаем информацию о группе
-        group = channel_db.get_channel(channel_id)
-        if not group:
-            bot.reply_to(message, "❌ Группа не найдена")
-            return
-        
-        # Получаем текст после команды
-        details = message.text.replace("/set_payment_details", "").strip()
-        if not details:
-            bot.reply_to(message, "ℹ️ Использование: /set_payment_details <реквизиты>")
-            return
-        
-        admin_db.set_payment_details(username, details)
-        bot.reply_to(
-            message, 
-            f"✅ Реквизиты для группы {group[1]} успешно обновлены:\n\n{details}"
-        )
 
     @bot.callback_query_handler(func=lambda call: call.data.startswith("reject_payment_"))
     def reject_payment(call: CallbackQuery):
@@ -1751,7 +1636,7 @@ def register_admin_handlers(bot: BotType) -> None:
         
         msg = bot.send_message(
             call.message.chat.id,
-            f"Текущее время на оплату: {current_hours} часов\n\n"
+            f"Текущее время на оплату: {int(current_hours)} часов\n\n"
             "Введите новое значение в часах (0 - для отключения):"
         )
         bot.register_next_step_handler(msg, process_payment_time_limit)

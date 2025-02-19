@@ -1,6 +1,5 @@
 from typing import List
 from telebot.types import Message
-from new_bot.config import CHANNEL_ID
 from new_bot.types import Training
 from new_bot.database.trainer import TrainerDB
 

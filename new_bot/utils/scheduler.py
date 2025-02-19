@@ -127,7 +127,6 @@ class PaymentScheduler:
         for admin in admins:
             admin_username = admin[0]
             payment_time_limit = self.admin_db.get_payment_time_limit(admin_username)
-            print(payment_time_limit)
             
             # Пропускаем, если функция отключена
             if payment_time_limit == 0:
@@ -152,12 +151,10 @@ class PaymentScheduler:
                     username = participant[0]
                     # Проверяем время с момента записи
                     signup_time = trainer_db.get_signup_time(username, training.id)
-                    print(signup_time)
                     if not signup_time:
                         continue
                         
                     time_passed = (datetime.now() - signup_time).total_seconds() / 60
-                    print(time_passed)
                     if time_passed > payment_time_limit:
                         # Проверяем оплату
                         if trainer_db.get_payment_status(username, training.id) != 2:
