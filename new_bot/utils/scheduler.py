@@ -51,7 +51,7 @@ class InvitationScheduler:
                 SELECT username, training_id 
                 FROM invites 
                 WHERE status = 'PENDING'
-                AND invite_timestamp < datetime('now', '-2 hour')
+                AND invite_timestamp < datetime('now', '+3 hours', '-2 hour')
             ''')
             
             for invite in expired_invites:
@@ -127,6 +127,7 @@ class PaymentScheduler:
         for admin in admins:
             admin_username = admin[0]
             payment_time_limit = self.admin_db.get_payment_time_limit(admin_username)
+            print(payment_time_limit)
             
             # Пропускаем, если функция отключена
             if payment_time_limit == 0:
@@ -151,10 +152,12 @@ class PaymentScheduler:
                     username = participant[0]
                     # Проверяем время с момента записи
                     signup_time = trainer_db.get_signup_time(username, training.id)
+                    print(signup_time)
                     if not signup_time:
                         continue
                         
                     time_passed = (datetime.now() - signup_time).total_seconds() / 60
+                    print(time_passed)
                     if time_passed > payment_time_limit:
                         # Проверяем оплату
                         if trainer_db.get_payment_status(username, training.id) != 2:
@@ -176,7 +179,7 @@ class PaymentScheduler:
                                     f"🏋️‍♂️ Тип: {training.kind}\n"
                                     f"📍 Место: {training.location}\n"
                                     f"📋 Позиция в резерве: {position}\n\n"
-                                    f"Время на оплату: {payment_time_limit/60:.1f} часов"
+                                    f"Время на оплату: {payment_time_limit/60} часов"
                                 )
                                 try:
                                     self.bot.send_message(user_id, notification)
@@ -250,7 +253,7 @@ class ReserveScheduler:
                 SELECT username, training_id, signup_time 
                 FROM participants 
                 WHERE status = 'RESERVE_PENDING'
-                AND signup_time < datetime('now', '-2 hours')
+                AND signup_time < datetime('now', '+3 hours', '-2 hours')
             ''')
             
             for offer in expired_offers:

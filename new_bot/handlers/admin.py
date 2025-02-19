@@ -1751,7 +1751,7 @@ def register_admin_handlers(bot: BotType) -> None:
         
         msg = bot.send_message(
             call.message.chat.id,
-            f"Текущее время на оплату: {current_hours:.1f} часов\n\n"
+            f"Текущее время на оплату: {current_hours} часов\n\n"
             "Введите новое значение в часах (0 - для отключения):"
         )
         bot.register_next_step_handler(msg, process_payment_time_limit)
@@ -1768,7 +1768,7 @@ def register_admin_handlers(bot: BotType) -> None:
             minutes = int(hours * 60)
             
             if admin_db.set_payment_time_limit(message.from_user.username, minutes):
-                status = "отключена" if minutes == 0 else f"установлена на {hours:.1f} часов"
+                status = "отключена" if minutes == 0 else f"установлена на {hours} часов"
                 bot.reply_to(
                     message,
                     f"✅ Функция автоматического перемещения в резерв {status}"

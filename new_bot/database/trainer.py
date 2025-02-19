@@ -209,11 +209,11 @@ class TrainerDB(BaseDB):
             if current_count >= training.max_participants:
                 return False
             
-            # Добавляем участника с текущим временем
+            # Добавляем участника с московским временем (UTC+3)
             self.execute_query('''
                 INSERT OR IGNORE INTO participants 
                 (username, training_id, signup_time) 
-                VALUES (?, ?, datetime('now'))
+                VALUES (?, ?, datetime('now', '+3 hours'))
             ''', (username, training_id))
             return True
         except Exception as e:
