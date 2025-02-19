@@ -51,7 +51,7 @@ class InvitationScheduler:
                 SELECT username, training_id 
                 FROM invites 
                 WHERE status = 'PENDING'
-                AND invite_timestamp < datetime('now', '+3 hours', '-2 hour')
+                AND invite_timestamp < datetime('now', '-2 hour')
             ''')
             
             for invite in expired_invites:
@@ -250,7 +250,7 @@ class ReserveScheduler:
                 SELECT username, training_id, signup_time 
                 FROM participants 
                 WHERE status = 'RESERVE_PENDING'
-                AND signup_time < datetime('now', '+3 hours', '-2 hours')
+                AND signup_time < datetime('now', '-2 hours')
             ''')
             
             for offer in expired_offers:
