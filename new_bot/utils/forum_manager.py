@@ -10,9 +10,9 @@ class ForumManager:
     def create_training_topic(self, training: Training, admin_username: str) -> int:
         """Создает новую тему для тренировки в форуме"""
         topic_name = (
-            f"🏋️‍♂️ {training.kind} | "
-            f"📅 {training.date_time.strftime('%d.%m.%Y %H:%M')} | "
-            f"📍 {training.location}"
+            f"{training.kind} | "
+            f"📅{training.date_time.strftime('%d.%m %H:%M')} | "
+            f"📍{training.location}"
         )
         # Создаем новую тему в форуме
         result = self.bot.create_forum_topic(
@@ -108,9 +108,9 @@ class ForumManager:
         try:
             # Обновляем название темы
             new_topic_name = (
-                f"🏋️‍♂️ {training.kind} | "
-                f"📅 {training.date_time.strftime('%d.%m.%Y %H:%M')} | "
-                f"📍 {training.location}"
+                f"{training.kind} | "
+                f"📅{training.date_time.strftime('%d.%m %H:%M')} | "
+                f"📍{training.location}"
             )
             
             try:
