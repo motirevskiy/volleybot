@@ -1,3 +1,4 @@
+from datetime import datetime
 from telebot.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, Message
 from new_bot.database.admin import AdminDB
 from new_bot.database.trainer import TrainerDB
@@ -314,6 +315,8 @@ def register_user_handlers(bot: BotType) -> None:
 
         if trainer_db.add_participant(username, training_id):
             bot.send_message(call.message.chat.id, "✅ Вы успешно записались на тренировку!")
+            if admin_db.get_payment_time_limit(admin_username) > 0:
+                bot.send_message(call.message.chat.id, f"💰 Оплатите тренировку в течение {int(admin_db.get_payment_time_limit(admin_username) / 60)} часов, чтобы подтвердить запись")
             
             # Обновляем список участников в теме
             if topic_id := trainer_db.get_topic_id(training_id):
@@ -410,7 +413,15 @@ def register_user_handlers(bot: BotType) -> None:
                     f"⏱ Длительность: {training.duration} минут\n"
                     f"👤 Тренер: @{admin_username}"
                 )
+
+                signup_time = trainer_db.get_signup_time(username, training.id)
+                time_passed = (datetime.now() - signup_time).total_seconds() / 60
+                time_remaining = admin_db.get_payment_time_limit(admin_username) - time_passed
+
+                if admin_db.get_payment_time_limit(admin_username) > 0 and trainer_db.get_payment_status(username, training.id) == 0:
+                    message += f"\n💰 Оплата тренировки в течение {int(time_remaining)} минут"
                 
+                                
                 trainer_db = TrainerDB(admin_username)
                 row_buttons = []
                 
@@ -610,6 +621,8 @@ def register_user_handlers(bot: BotType) -> None:
             )
             
             bot.send_message(call.message.chat.id, "✅ Вы подтвердили участие в тренировке!")
+            if admin_db.get_payment_time_limit(admin_username) > 0:
+                bot.send_message(call.message.chat.id, f"💰 Оплатите тренировку в течение {int(admin_db.get_payment_time_limit(admin_username) / 60)} часов, чтобы подтвердить запись")
         else:
             # Обновляем статус приглашения на DECLINED
             trainer_db.execute_query(
@@ -807,7 +820,7 @@ def register_user_handlers(bot: BotType) -> None:
         # Проверяем баланс пользователя
         user_db = TrainerDB(username)
         if user_db.get_auto_signups_balance(username) <= 0:
-            bot.answer_callback_query(call.id, "У вас нет доступных автозаписей", show_alert=True)
+            bot.send_message(call.message.chat.id, "У вас нет доступных автозаписей\n🎫 Для пополнения баланса напишите @motirevskiy")
             return
         
         # Проверяем доступные слоты
@@ -818,21 +831,9 @@ def register_user_handlers(bot: BotType) -> None:
         # Добавляем запрос
         if trainer_db.add_auto_signup_request(username, training_id):
             bot.answer_callback_query(call.id, "✅ Автозапись успешно добавлена", show_alert=True)
-            
-            confirmation = (
-                "✅ Вы добавили автозапись на тренировку:\n\n"
-                f"👥 Группа: {group[1]}\n"
-                f"📅 Дата: {training.date_time.strftime('%d.%m.%Y %H:%M')}\n"
-                f"🏋️‍♂️ Тип: {training.kind}\n"
-                f"📍 Место: {training.location}\n\n"
-                "Вы будете автоматически записаны при открытии записи"
-            )
-            
-            # Обновляем сообщение с информацией об автозаписях
+            user_db = TrainerDB(username)
+            user_db.decrease_auto_signups(username)
             show_auto_signup_info(call)
-            
-            # Отправляем отдельное сообщение с подтверждением
-            bot.send_message(call.message.chat.id, confirmation)
         else:
             bot.answer_callback_query(call.id, "Не удалось добавить автозапись", show_alert=True)
 
@@ -855,10 +856,12 @@ def register_user_handlers(bot: BotType) -> None:
         if action == "accept":
             if trainer_db.accept_reserve_spot(username, training_id):
                 message = "✅ Вы подтвердили участие в тренировке!"
+                if admin_db.get_payment_time_limit(admin_username) > 0:
+                    message += f"\n💰 Оплатите тренировку в течение {int(admin_db.get_payment_time_limit(admin_username) / 60)} часов, чтобы подтвердить запись"
             else:
                 message = "❌ Не удалось подтвердить участие"
         else:
-            trainer_db.remove_from_reserve(username, training_id)
+            trainer_db.remove_participant(username, training_id)
             message = "Вы отказались от участия в тренировке"
         
         # Обновляем список в форуме

@@ -440,29 +440,6 @@ class TrainerDB(BaseDB):
             print(f"Error offering spot to reserve: {e}")
             return None
 
-    def schedule_pending_cleanup(self, username: str, training_id: int) -> None:
-        """Планирует очистку через 2 часа"""
-        from threading import Timer
-        
-        def cleanup():
-            # Проверяем статус участника
-            status = self.fetch_one('''
-                SELECT status FROM participants
-                WHERE username = ? AND training_id = ?
-            ''', (username, training_id))
-            
-            if status and status[0] == 'PENDING':
-                # Удаляем из списка и предлагаем место следующему
-                self.execute_query('''
-                    DELETE FROM participants
-                    WHERE username = ? AND training_id = ? AND status = 'PENDING'
-                ''', (username, training_id))
-                
-                # Предлагаем место следующему в резерве
-                self.offer_spot_to_next_in_reserve(training_id)
-        
-        Timer(7200, cleanup).start()
-
     def accept_reserve_spot(self, username: str, training_id: int) -> bool:
         """Принимает приглашение, убирая статус PENDING"""
         self.debug_participant_info(username, training_id)  # Перед изменениями
@@ -470,14 +447,28 @@ class TrainerDB(BaseDB):
         try:
             self.execute_query('''
                 UPDATE participants 
-                SET status = 'ACTIVE'
-                WHERE username = ? AND training_id = ? AND status = 'PENDING'
+                SET status = 'ACTIVE' 
+                WHERE username = ? AND training_id = ? AND status = 'RESERVE_PENDING'
             ''', (username, training_id))
             
+            self.update_signup_time(username, training_id)
             self.debug_participant_info(username, training_id)  # После изменений
             return True
         except Exception as e:
             print(f"[ERROR] Error in accept_reserve_spot: {e}")
+            return False
+        
+    def update_signup_time(self, username: str, training_id: int) -> bool:
+        """Обновляет время записи"""
+        try:
+            self.execute_query('''
+                UPDATE participants 
+                SET signup_time = datetime('now', '+3 hours')
+                WHERE username = ? AND training_id = ?
+            ''', (username, training_id))
+            return True
+        except Exception as e:
+            print(f"[ERROR] Error in update_signup_time: {e}")
             return False
 
     def set_payment_status(self, username: str, training_id: int, status: int) -> bool:
@@ -610,7 +601,7 @@ class TrainerDB(BaseDB):
         
         # Проверяем запись в таблице participants
         participant = self.fetch_all('''
-            SELECT username, training_id, status, rowid
+            SELECT username, training_id, status, rowid, signup_time
             FROM participants
             WHERE username = ? AND training_id = ?
         ''', (username, training_id))
@@ -618,7 +609,7 @@ class TrainerDB(BaseDB):
         
         # Проверяем все записи для этой тренировки
         all_participants = self.fetch_all('''
-            SELECT username, training_id, status, rowid
+            SELECT username, training_id, status, rowid, signup_time
             FROM participants
             WHERE training_id = ?
             ORDER BY rowid

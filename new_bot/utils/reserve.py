@@ -47,12 +47,12 @@ def offer_spot_to_reserve(training_id: int, admin_username: str, bot):
             try:
                 bot.send_message(user_id, notification, reply_markup=markup)
                 
-                # Обновляем список в форуме
-                if topic_id := trainer_db.get_topic_id(training_id):
-                    from new_bot.utils.forum_manager import ForumManager
-                    forum_manager = ForumManager(bot)
-                    participants = trainer_db.get_participants_by_training_id(training_id)
-                    forum_manager.update_participants_list(training, participants, topic_id, trainer_db)
+                # # Обновляем список в форуме
+                # if topic_id := trainer_db.get_topic_id(training_id):
+                #     from new_bot.utils.forum_manager import ForumManager
+                #     forum_manager = ForumManager(bot)
+                #     participants = trainer_db.get_participants_by_training_id(training_id)
+                #     forum_manager.update_participants_list(training, participants, topic_id, trainer_db)
                 
                 return True
             except Exception as e:

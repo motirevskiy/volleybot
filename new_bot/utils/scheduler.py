@@ -118,7 +118,7 @@ class PaymentScheduler:
                 self._check_payments()
             except Exception as e:
                 print(f"Error in payment scheduler: {e}")
-            time.sleep(60)  # Проверяем каждую минуту
+            time.sleep(180)  # Проверяем каждую минуту
             
     def _check_payments(self):
         """Проверяет оплаты и перемещает неоплативших в резерв"""
@@ -139,6 +139,11 @@ class PaymentScheduler:
                 if training.status != "OPEN":
                     continue
                     
+                # Получаем информацию о группе
+                group = self.channel_db.get_channel(training.channel_id)
+                if not group:
+                    continue
+
                 # Получаем только активных участников (не RESERVE_PENDING)
                 participants = trainer_db.fetch_all('''
                     SELECT username 
@@ -155,14 +160,28 @@ class PaymentScheduler:
                         continue
                         
                     time_passed = (datetime.now() - signup_time).total_seconds() / 60
+                    print(time_passed)
+                    print(payment_time_limit)
+
+                    if payment_time_limit - time_passed > 59 and payment_time_limit - time_passed < 61:
+                        if trainer_db.get_payment_status(username, training.id) != 2:
+                            user_id = self.admin_db.get_user_id(username)
+                            notification = (
+                                "⚠️ У вас осталось менее часа на оплату тренировки:\n\n"
+                                f"👥 Группа: {group[1]}\n"
+                                f"📅 Дата: {training.date_time.strftime('%d.%m.%Y %H:%M')}\n"
+                                f"🏋️‍♂️ Тип: {training.kind}\n"
+                                f"📍 Место: {training.location}\n"
+                            )
+                            try:
+                                self.bot.send_message(user_id, notification)
+                            except Exception as e:
+                                print(f"Error notifying user {username}: {e}")
+                            continue
+
                     if time_passed > payment_time_limit:
                         # Проверяем оплату
                         if trainer_db.get_payment_status(username, training.id) != 2:
-                            # Получаем информацию о группе
-                            group = self.channel_db.get_channel(training.channel_id)
-                            if not group:
-                                continue
-                                
                             # Перемещаем в резерв
                             trainer_db.remove_participant(username, training.id)
                             position = trainer_db.add_to_reserve(username, training.id)

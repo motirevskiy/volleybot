@@ -80,8 +80,8 @@ class AdminDB(BaseDB):
         )
         return [row[0] for row in result]
 
-    def get_all_admins(self) -> List[Tuple[str]]:
-        return self.fetch_all("SELECT username FROM admins")
+    def get_all_admins(self) -> List[Tuple[str, int]]:
+        return self.fetch_all("SELECT username, channel_id FROM admins")
     
     def add_user(self, user_id: int, username: str) -> None:
         self.execute_query(

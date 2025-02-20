@@ -88,6 +88,16 @@ def register_admin_handlers(bot: BotType) -> None:
             reply_markup=markup
         )
 
+    @bot.message_handler(commands=["admins_list"])
+    def admins_list(message: Message):
+        """Показывает список администраторов"""
+        admins = admin_db.get_all_admins()
+        for admin in admins:
+            username = admin[0]
+            chat_id = admin[1]
+            chat_name = channel_db.get_channel(chat_id)[1]
+            bot.send_message(message.chat.id, f"@{username} - {chat_name}")
+
     @bot.callback_query_handler(func=lambda call: call.data.startswith("remadm_"))
     def remove_admin(call: CallbackQuery):
         """Удаляет администратора из группы"""
@@ -789,69 +799,6 @@ def register_admin_handlers(bot: BotType) -> None:
         
         bot.send_message(message.chat.id, stats_message)
 
-    @bot.callback_query_handler(func=lambda call: call.data.startswith(("accept_reserve_", "decline_reserve_")) and "invite" not in call.data)
-    def handle_reserve_response(call: CallbackQuery):
-        parts = call.data.split("_")
-        action = parts[0]  # "accept" или "decline"
-        training_id = int(parts[2])
-        username = call.from_user.username
-        
-        admin_username = find_training_admin(training_id)
-        if not admin_username:
-            bot.send_message(call.message.chat.id, "Ошибка: тренировка не найдена")
-            return
-        
-        trainer_db = TrainerDB(admin_username)
-        
-        # Проверяем статус в таблице participants
-        participant_status = trainer_db.fetch_one('''
-            SELECT status FROM participants 
-            WHERE username = ? AND training_id = ?
-        ''', (username, training_id))
-        
-        if not participant_status or participant_status[0] != 'RESERVE_PENDING':
-            bot.answer_callback_query(
-                call.id,
-                "❌ Это предложение уже недействительно",
-                show_alert=True
-            )
-            bot.delete_message(call.message.chat.id, call.message.message_id)
-            return
-        
-        if action == "accept":
-            # Обновляем статус с RESERVE_PENDING на ACTIVE
-            trainer_db.execute_query('''
-                UPDATE participants 
-                SET status = 'ACTIVE' 
-                WHERE username = ? AND training_id = ? AND status = 'RESERVE_PENDING'
-            ''', (username, training_id))
-            bot.send_message(call.message.chat.id, "✅ Вы успешно записаны на тренировку!")
-            
-            # Обновляем список в форуме
-            if topic_id := trainer_db.get_topic_id(training_id):
-                training = trainer_db.get_training_details(training_id)
-                participants = trainer_db.get_participants_by_training_id(training_id)
-                forum_manager.update_participants_list(training, participants, topic_id, trainer_db)
-        else:
-            # Удаляем из списка участников
-            trainer_db.execute_query('''
-                DELETE FROM participants 
-                WHERE username = ? AND training_id = ? AND status = 'RESERVE_PENDING'
-            ''', (username, training_id))
-            
-            bot.send_message(call.message.chat.id, "Вы отказались от места в тренировке")
-            
-            # Предлагаем место следующему
-            offer_spot_to_reserve(training_id, admin_username, bot)
-            
-            # Обновляем список в форуме
-            if topic_id := trainer_db.get_topic_id(training_id):
-                training = trainer_db.get_training_details(training_id)
-                participants = trainer_db.get_participants_by_training_id(training_id)
-                forum_manager.update_participants_list(training, participants, topic_id, trainer_db)
-        
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-
     @bot.callback_query_handler(func=lambda call: call.data.startswith("confirm_payment_"))
     def confirm_payment(call: CallbackQuery):
         """Подтверждает оплату тренировки"""
@@ -1539,12 +1486,6 @@ def register_admin_handlers(bot: BotType) -> None:
             
             # Добавляем участника
             if trainer_db.add_participant(username, training.id):
-                # Уменьшаем количество автозаписей
-                user_db = TrainerDB(username)
-                user_db.decrease_auto_signups(username)
-                
-                # # Удаляем запрос автозаписи
-                # trainer_db.remove_auto_signup_request(username, training.id)
                 
                 # Отправляем уведомление пользователю
                 if user_id := admin_db.get_user_id(username):
@@ -1556,6 +1497,8 @@ def register_admin_handlers(bot: BotType) -> None:
                         f"📍 Место: {training.location}\n"
                         f"💰 Стоимость: {training.price}₽"
                     )
+                    if admin_db.get_payment_time_limit(username) > 0:
+                        notification += f"\n💰 Оплата тренировки в течение {admin_db.get_payment_time_limit(username) / 60} часов"
                     try:
                         bot.send_message(user_id, notification)
                     except Exception as e:
