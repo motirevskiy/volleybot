@@ -117,11 +117,11 @@ def register_admin_handlers(bot: BotType) -> None:
     @bot.callback_query_handler(func=lambda call: call.data.startswith("remove_channel_"))
     def remove_channel_callback(call: CallbackQuery):
         parts = call.data.split("_")
-        group_id = int(parts[1])
+        group_id = int(parts[2])
         
         # Удаляем группу
         channel_db.remove_channel(group_id)
-        bot.answer_callback_query(call.id, "Группа удалена")
+        bot.send_message(call.message.chat.id, "Группа удалена")
         
     @bot.callback_query_handler(func=lambda call: call.data.startswith("remadm_"))
     def remove_admin(call: CallbackQuery):
