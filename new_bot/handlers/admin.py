@@ -91,6 +91,10 @@ def register_admin_handlers(bot: BotType) -> None:
     @bot.message_handler(commands=["admins_list"])
     def admins_list(message: Message):
         """Показывает список администраторов"""
+        if not admin_db.is_admin(message.from_user.username):
+            bot.reply_to(message, "❌ У вас нет прав администратора")
+            return
+        
         admins = admin_db.get_all_admins()
         for admin in admins:
             username = admin[0]
@@ -98,6 +102,27 @@ def register_admin_handlers(bot: BotType) -> None:
             chat_name = channel_db.get_channel(chat_id)[1]
             bot.send_message(message.chat.id, f"@{username} - {chat_name}")
 
+    @bot.message_handler(commands=["remove_channel"])
+    def remove_channel(message: Message):
+        """Удаляет группу"""
+        if message.from_user.username != SUPERADMIN_USERNAME:
+            return
+        
+        markup = InlineKeyboardMarkup()
+        for group_id, title in channel_db.get_all_channels():
+            markup.add(InlineKeyboardButton(title, callback_data=f"remove_channel_{group_id}"))
+        
+        bot.send_message(message.chat.id, "Выберите группу для удаления:", reply_markup=markup)
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("remove_channel_"))
+    def remove_channel_callback(call: CallbackQuery):
+        parts = call.data.split("_")
+        group_id = int(parts[1])
+        
+        # Удаляем группу
+        channel_db.remove_channel(group_id)
+        bot.answer_callback_query(call.id, "Группа удалена")
+        
     @bot.callback_query_handler(func=lambda call: call.data.startswith("remadm_"))
     def remove_admin(call: CallbackQuery):
         """Удаляет администратора из группы"""
