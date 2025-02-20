@@ -1,1 +1,5 @@
 token.txt
+venv
+new_bot/__pycache__
+new_bot/*/__pycache__
+
