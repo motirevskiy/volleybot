@@ -8,6 +8,10 @@ admin_db = AdminDB()
 def register_common_handlers(bot: BotType) -> None:
     @bot.message_handler(commands=['start'])
     def start(message: Message):
+        if message.chat.type != 'private':
+            bot.reply_to(message, "Эта команда доступна только в личных сообщениях с ботом.")
+            return
+            
         markup = get_main_menu_keyboard()
         bot.reply_to(
             message,

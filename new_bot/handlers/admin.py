@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 from new_bot.utils.forum_manager import ForumManager
 from new_bot.handlers.stats import show_user_statistics  # Обновляем импорт
 from new_bot.utils.reserve import offer_spot_to_reserve
+import re
 
 # Словарь для хранения данных при создании тренировки
 training_creation_data: Dict[int, TrainingData] = {}
@@ -34,6 +35,24 @@ def find_training_admin(training_id: int) -> Optional[str]:
         if trainer_db.get_training_details(training_id):
             return admin[0]
     return None
+
+import re
+
+def split_with_username(s: str) -> list:
+    pattern = re.compile(r'(\$[^$]*\$)|([^_]+)')
+    parts = []
+
+    for match in pattern.finditer(s):
+        dollar_block, normal_block = match.groups()
+
+        if dollar_block:
+            parts.append(dollar_block[1:-1])
+        elif normal_block:
+            parts.append(normal_block)
+
+    return [part for part in parts if part]
+
+
 
 def register_admin_handlers(bot: BotType) -> None:
     # Создаем экземпляр ForumManager
@@ -74,7 +93,7 @@ def register_admin_handlers(bot: BotType) -> None:
                 for admin in admins:
                     markup.add(InlineKeyboardButton(
                         f"❌ Удалить @{admin}",
-                        callback_data=f"remadm_{admin}_{group_id}"
+                        callback_data=f"remadm_${admin}$_{group_id}"
                     ))
                 markup.add(InlineKeyboardButton("➖➖➖➖➖", callback_data="separator"))
         
@@ -126,7 +145,7 @@ def register_admin_handlers(bot: BotType) -> None:
     @bot.callback_query_handler(func=lambda call: call.data.startswith("remadm_"))
     def remove_admin(call: CallbackQuery):
         """Удаляет администратора из группы"""
-        parts = call.data.split("_")
+        parts = split_with_username(call.data)
         admin_username = parts[1]
         group_id = int(parts[2])
         
@@ -828,7 +847,7 @@ def register_admin_handlers(bot: BotType) -> None:
     def confirm_payment(call: CallbackQuery):
         """Подтверждает оплату тренировки"""
         try:
-            parts = call.data.split("_")
+            parts = split_with_username(call.data)
             training_id = int(parts[2])
             username = parts[3]
             
@@ -1084,8 +1103,8 @@ def register_admin_handlers(bot: BotType) -> None:
         # Создаем клавиатуру для админа
         markup = InlineKeyboardMarkup()
         markup.add(
-            InlineKeyboardButton("✅ Подтвердить", callback_data=f"confirm_payment_{training_id}_{username}"),
-            InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_payment_{training_id}_{username}")
+            InlineKeyboardButton("✅ Подтвердить", callback_data=f"confirm_payment_{training_id}_${username}$"),
+            InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_payment_{training_id}_${username}$")
         )
         
         # Получаем user_id админа
@@ -1162,6 +1181,11 @@ def register_admin_handlers(bot: BotType) -> None:
 
     def show_admin_menu(message: Message):
         """Показывает меню администратора"""
+
+        if message.chat.type != 'private':
+            bot.reply_to(message, "Эта команда доступна только в личных сообщениях с ботом.")
+            return
+
         username = message.from_user.username
         
         # Получаем channel_id администратора
@@ -1248,7 +1272,7 @@ def register_admin_handlers(bot: BotType) -> None:
         for username in participants:
             markup.add(InlineKeyboardButton(
                 f"❌ @{username}",
-                callback_data=f"remove_participant_{training_id}_{username}"
+                callback_data=f"remove_participant_{training_id}_${username}$"
             ))
         
         bot.send_message(
@@ -1264,7 +1288,7 @@ def register_admin_handlers(bot: BotType) -> None:
     @bot.callback_query_handler(func=lambda call: call.data.startswith("remove_participant_"))
     def request_removal_reason(call: CallbackQuery):
         """Запрашивает причину удаления участника"""
-        parts = call.data.split("_")
+        parts = split_with_username(call.data)
         training_id = int(parts[2])
         username = parts[3]
         
@@ -1534,7 +1558,7 @@ def register_admin_handlers(bot: BotType) -> None:
     def reject_payment(call: CallbackQuery):
         """Отклоняет оплату тренировки"""
         try:
-            parts = call.data.split("_")
+            parts = split_with_username(call.data)
             training_id = int(parts[2])
             username = parts[3]
             
@@ -1721,8 +1745,8 @@ def register_admin_handlers(bot: BotType) -> None:
             if group:
                 markup = InlineKeyboardMarkup()
                 markup.row(
-                    InlineKeyboardButton("✅ Одобрить", callback_data=f"approve_admin_{username}_{channel_id}"),
-                    InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_admin_{username}_{channel_id}")
+                    InlineKeyboardButton("✅ Одобрить", callback_data=f"approve_admin_${username}$_{channel_id}"),
+                    InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_admin_${username}$_{channel_id}")
                 )
                 
                 notification = (
@@ -1740,10 +1764,11 @@ def register_admin_handlers(bot: BotType) -> None:
             bot.answer_callback_query(call.id, "❌ Недостаточно прав", show_alert=True)
             return
 
-        splited_data = call.data.split("_")
+        splited_data = split_with_username(call.data)
+
         action = splited_data[0]
-        username = f"{splited_data[2]}_{splited_data[3]}" if len(splited_data) == 5 else splited_data[2]
-        channel_id = splited_data[len(splited_data) - 1]
+        username = splited_data[2]
+        channel_id = splited_data[3]
         
         # Получаем информацию о группе
         group = channel_db.get_channel(channel_id)

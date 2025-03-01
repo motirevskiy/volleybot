@@ -2,7 +2,6 @@ README.md
 setup.py
 new_bot/__init__.py
 new_bot/bot.py
-new_bot/config.py
 new_bot/types.py
 new_bot.egg-info/PKG-INFO
 new_bot.egg-info/SOURCES.txt

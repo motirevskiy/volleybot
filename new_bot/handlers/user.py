@@ -8,6 +8,8 @@ from typing import Optional
 from new_bot.utils.forum_manager import ForumManager
 from new_bot.utils.reserve import offer_spot_to_reserve
 
+import re
+
 # Создаем экземпляры баз данных
 admin_db = AdminDB()
 channel_db = ChannelDB()
@@ -20,11 +22,25 @@ def find_training_admin(training_id: int) -> Optional[str]:
             return admin[0]
     return None
 
+def split_with_username(s: str) -> list:
+    pattern = re.compile(r'(\$[^$]*\$)|([^_]+)')
+    parts = []
+
+    for match in pattern.finditer(s):
+        dollar_block, normal_block = match.groups()
+
+        if dollar_block:
+            parts.append(dollar_block[1:-1])
+        elif normal_block:
+            parts.append(normal_block)
+
+    return [part for part in parts if part]
+
 # Глобальные обработчики для отмены записи
 def cancel_training_handler(call: CallbackQuery, bot: BotType, forum_manager: ForumManager):
     """Обработчик отмены записи на тренировку"""
     try:
-        parts = call.data.split("_")
+        parts = split_with_username(call.data)
         admin_username = parts[1]
         training_id = int(parts[2])
         username = call.from_user.username
@@ -283,7 +299,7 @@ def register_user_handlers(bot: BotType) -> None:
             )
             markup.add(InlineKeyboardButton(
                 button_text,
-                callback_data=f"signup_training_{admin}_{training.id}"
+                callback_data=f"signup_training_${admin}$_{training.id}"
             ))
         
         bot.edit_message_text(
@@ -296,7 +312,7 @@ def register_user_handlers(bot: BotType) -> None:
     @bot.callback_query_handler(func=lambda call: call.data.startswith("signup_training_"))
     def process_training_signup(call: CallbackQuery):
         """Обрабатывает запись на тренировку"""
-        parts = call.data.split("_")
+        parts = split_with_username(call.data)
         admin_username = parts[2]
         training_id = int(parts[3])
         username = call.from_user.username
@@ -354,7 +370,7 @@ def register_user_handlers(bot: BotType) -> None:
         admin_db.execute_query("DELETE FROM users WHERE user_id = ?", (user_id,))
         bot.send_message(call.message.chat.id, "Вы успешно отписаны от рассылки.")
 
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("cancel_") and len(call.data.split("_")) == 3)
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("cancel_"))
     def cancel_training(call: CallbackQuery):
         """Обработчик отмены записи на тренировку"""
         cancel_training_handler(call, bot, forum_manager)
@@ -470,7 +486,7 @@ def register_user_handlers(bot: BotType) -> None:
                 markup = InlineKeyboardMarkup()
                 markup.add(InlineKeyboardButton(
                     "Отменить резерв", 
-                    callback_data=f"cancel_{admin_username}_{training.id}"
+                    callback_data=f"cancel_${admin_username}$_{training.id}"
                 ))
                 
                 bot.send_message(call.message.chat.id, message, reply_markup=markup)
@@ -550,7 +566,7 @@ def register_user_handlers(bot: BotType) -> None:
             )
             markup.add(InlineKeyboardButton(
                 button_text,
-                callback_data=f"invite_training_{training.id}_{admin}"
+                callback_data=f"invite_training_{training.id}_${admin}$"
             ))
 
         bot.send_message(
@@ -562,7 +578,7 @@ def register_user_handlers(bot: BotType) -> None:
     @bot.callback_query_handler(func=lambda call: call.data.startswith("invite_training_"))
     def process_training_invite_request(call: CallbackQuery):
         """Обрабатывает выбор тренировки для приглашения"""
-        parts = call.data.split("_")
+        parts = split_with_username(call.data)
         training_id = int(parts[2])
         admin_username = parts[3]
         username = call.from_user.username
@@ -771,7 +787,7 @@ def register_user_handlers(bot: BotType) -> None:
             markup = InlineKeyboardMarkup()
             markup.add(InlineKeyboardButton(
                 "🎫 Добавить автозапись",
-                callback_data=f"request_auto_signup_{admin}_{training.id}"
+                callback_data=f"request_auto_signup_${admin}$_{training.id}"
             ))
             
             # Формируем сообщение с информацией о тренировке
@@ -798,7 +814,7 @@ def register_user_handlers(bot: BotType) -> None:
             return
         
         # Разбираем callback_data
-        parts = call.data.split("_")
+        parts = split_with_username(call.data)
         admin_username = parts[3]  # username админа
         training_id = int(parts[4])  # id тренировки
         
