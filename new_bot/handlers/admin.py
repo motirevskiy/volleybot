@@ -91,9 +91,9 @@ def register_admin_handlers(bot: BotType) -> None:
     @bot.message_handler(commands=["admins_list"])
     def admins_list(message: Message):
         """Показывает список администраторов"""
-        if not admin_db.is_admin(message.from_user.username):
-            bot.reply_to(message, "❌ У вас нет прав администратора")
-            return
+        # if not admin_db.is_admin(message.from_user.username):
+        #     bot.reply_to(message, "❌ У вас нет прав администратора")
+        #     return
         
         admins = admin_db.get_all_admins()
         for admin in admins:
@@ -1644,6 +1644,8 @@ def register_admin_handlers(bot: BotType) -> None:
         if not channels:
             bot.reply_to(call.message, "❌ Нет доступных групп")
             return
+
+        user_info = admin_db.get_user_info(username)
         
         # Создаем клавиатуру с группами
         markup = InlineKeyboardMarkup()
@@ -1665,11 +1667,30 @@ def register_admin_handlers(bot: BotType) -> None:
         channel_id = int(call.data.split("_")[2])
         username = call.from_user.username
         
-        # Проверяем, не является ли уже админом
+        # Проверяем, не является ли уже админом в боте
         if admin_db.is_admin(username, channel_id):
             bot.answer_callback_query(
                 call.id,
                 "❌ Вы уже являетесь администратором этой группы",
+                show_alert=True
+            )
+            return
+
+        # Проверяем, является ли пользователь админом в группе Telegram
+        try:
+            chat_member = bot.get_chat_member(channel_id, call.from_user.id)
+            if chat_member.status not in ['creator', 'administrator']:
+                bot.answer_callback_query(
+                    call.id,
+                    "❌ Вы должны быть администратором группы в Telegram",
+                    show_alert=True
+                )
+                return
+        except Exception as e:
+            print(f"Error checking admin status: {e}")
+            bot.answer_callback_query(
+                call.id,
+                "❌ Ошибка проверки прав администратора",
                 show_alert=True
             )
             return
@@ -1679,14 +1700,6 @@ def register_admin_handlers(bot: BotType) -> None:
             SELECT status FROM admin_requests 
             WHERE username = ? AND channel_id = ? AND status = 'PENDING'
         ''', (username, channel_id))
-        
-        if existing_request:
-            bot.answer_callback_query(
-                call.id,
-                "❌ У вас уже есть активный запрос для этой группы",
-                show_alert=True
-            )
-            return
         
         # Добавляем запрос
         admin_db.execute_query('''
@@ -1726,10 +1739,11 @@ def register_admin_handlers(bot: BotType) -> None:
         if call.from_user.username != SUPERADMIN_USERNAME:
             bot.answer_callback_query(call.id, "❌ Недостаточно прав", show_alert=True)
             return
-        
-        action = call.data.split("_")[0]
-        username = call.data.split("_")[2]
-        channel_id = int(call.data.split("_")[3])
+
+        splited_data = call.data.split("_")
+        action = splited_data[0]
+        username = f"{splited_data[2]}_{splited_data[3]}" if len(splited_data) == 5 else splited_data[2]
+        channel_id = splited_data[len(splited_data) - 1]
         
         # Получаем информацию о группе
         group = channel_db.get_channel(channel_id)

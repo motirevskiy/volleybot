@@ -1,3 +1,4 @@
+README.md
 setup.py
 new_bot/__init__.py
 new_bot/bot.py
@@ -11,13 +12,16 @@ new_bot.egg-info/top_level.txt
 new_bot/database/__init__.py
 new_bot/database/admin.py
 new_bot/database/base.py
+new_bot/database/channel.py
 new_bot/database/trainer.py
 new_bot/handlers/__init__.py
 new_bot/handlers/admin.py
 new_bot/handlers/common.py
+new_bot/handlers/stats.py
 new_bot/handlers/user.py
 new_bot/utils/__init__.py
+new_bot/utils/forum_manager.py
 new_bot/utils/keyboards.py
-new_bot/utils/messages.py
-new_bot/utils/notifications.py
+new_bot/utils/reserve.py
+new_bot/utils/scheduler.py
 new_bot/utils/validators.py

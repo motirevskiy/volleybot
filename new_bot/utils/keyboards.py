@@ -36,7 +36,7 @@ def get_admin_menu_keyboard() -> InlineKeyboardMarkup:
     )
     markup.add(InlineKeyboardButton("💳 Установить реквизиты", callback_data="set_payment_details"))
     markup.add(InlineKeyboardButton("👥 Лимит приглашений", callback_data="set_invite_limit"))
-    markup.add(InlineKeyboardButton("⏱ Время на оплату", callback_data="set_payment_time"))
+    # markup.add(InlineKeyboardButton("⏱ Время на оплату", callback_data="set_payment_time"))
 
     return markup
 
